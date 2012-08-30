@@ -2,6 +2,10 @@
  * Lightweight GDB server implementation for AVR MCU
  ******************************************************************************/
 #include <avr/interrupt.h>
+#include <avr/boot.h>
+#include <avr/pgmspace.h>
+#include <stddef.h>
+
 #include "gdb.h"
 
 #define GDB_SAVE_CONTEXT()									\
@@ -97,8 +101,8 @@ static void gdb_trap();
 
 /******************************************************************************/
 
-__attribute__((naked))
-static void gdb_breakpoint_handler()
+__attribute__((naked,noinline))
+static void gdb_break_handler()
 {
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->int_reason = gdb_breakpoint;
@@ -122,12 +126,72 @@ ISR(TIMER0_COMP_vect, ISR_NAKED)
 void gdb_init(struct gdb_context *ctx)
 {
 	gdb_ctx = ctx;
-	gdb_ctx->breakpoint_handler = &gdb_breakpoint_handler;
+	gdb_ctx->stack = NULL;
+	gdb_ctx->int_reason = gdb_running;
+	gdb_ctx->breaks_cnt = 0;
+
+	/* Create 16-bit CALL instruction with address
+	   of break handler */
+	uintptr_t addr = (uintptr_t)&gdb_break_handler;
+	gdb_ctx->break_inst[0] = 0x0e;
+	gdb_ctx->break_inst[1] = 0x94;
+	gdb_ctx->break_inst[2] = addr & 0xff;
+	gdb_ctx->break_inst[3] = (addr >> 8) & 0xff;
+
 	//start uart
 }
 
-void gdb_trap()
+/* rom_addr is address in words, i.e. 2 bytes */
+__attribute__ ((section(".bootloader"),noinline))
+static void __safe_pgm_write_page(void *ram_addr, void *rom_addr,
+								  uint16_t sz)
 {
+	/* interrupts must be already disabled */
+
+	/* Sz must not be greater than page and must be even */
+	if (sz > SPM_PAGESIZE || sz & 1)
+		return;
+
+#define SPM_PAGEMASK ~((uint16_t)SPM_PAGESIZE-1)
+
+	uint16_t page = ((uintptr_t)rom_addr * 2) & SPM_PAGEMASK;
+	uint8_t off = ((uintptr_t)rom_addr * 2) % SPM_PAGESIZE;
+
+	eeprom_busy_wait();
+
+	/* Erase and wait until done. */
+	boot_page_erase(page);
+	boot_spm_busy_wait();
+
+	for (uint16_t *ram = (uint16_t*)ram_addr; off < sz;
+		 off += 2, ++ram) {
+		/* Set up little-endian word. */
+		uint16_t w = *ram & 0xff | (*ram << 8);
+		boot_page_fill(page + off, w);
+	}
+
+	/* Store buffer in flash page and wait until done. */
+	boot_page_write(page);
+	boot_spm_busy_wait();
+}
+
+/* rom_addr in words */
+static void gdb_rom_ram_swap_dword(void* rom_addr, void* ram_addr)
+{
+	uint32_t rom_dword = pgm_read_dword(rom_addr);
+	uint32_t ram_dword = *(uint32_t*)ram_addr;
+	if (rom_dword == ram_dword)
+		return;
+	*(uint32_t*)ram_addr = rom_dword;
+	__safe_pgm_write_page(&ram_dword, rom_addr, sizeof(ram_dword));
+}
+
+static void gdb_trap()
+{
+	//XXX
+	uint32_t v;
+	gdb_rom_ram_swap_dword(0x00, &v);
+#if 0
 	uint8_t  c;
 
 	while (1) {
@@ -235,6 +299,7 @@ void gdb_trap()
 		gdb_send_reply("-"); /* nak */
 		break;
 	}
+#endif
 }
 
 /******************************************************************************/

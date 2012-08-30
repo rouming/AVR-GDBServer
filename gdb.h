@@ -4,10 +4,21 @@
 #ifndef GDB_H
 #define GDB_H
 
+#include <stdint.h>
+
+#define MAX_BREAKS 8
+
 enum gdb_interrupt_reason
 {
-	gdb_user_interrupt  = 0,
-	gdb_breakpoint = 1
+	gdb_running        = 0,
+	gdb_user_interrupt = 1,
+	gdb_breakpoint     = 2
+};
+
+struct gdb_break
+{
+	void *addr;
+	uint8_t inst[4];
 };
 
 struct gdb_context
@@ -53,7 +64,9 @@ struct gdb_context
 			uint8_t ret_addr_l;
 		} *regs;
 		enum gdb_interrupt_reason int_reason;
-		void (*breakpoint_handler)();
+		uint8_t break_inst[4];
+		struct gdb_break breaks[MAX_BREAKS];
+		uint8_t breaks_cnt;
 	};
 };
 
