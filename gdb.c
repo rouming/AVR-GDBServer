@@ -10,6 +10,7 @@
 
 #define ROUNDUP(x, s) (((x) + (s) - 1) & ~((s) - 1))
 #define ROUNDDOWN(x, s) ((x) & ~((s) - 1))
+#define ARRAY_SIZE(arr) (sizeof(arr)/sizeof((arr)[0]))
 
 #if (SPM_PAGESIZE & (SPM_PAGESIZE - 1))
 #error SPM_PAGESIZE is not power of two! Impossible!
@@ -140,10 +141,13 @@ void gdb_init(struct gdb_context *ctx)
 	/* Create 16-bit CALL instruction with address
 	   of break handler */
 	uintptr_t addr = (uintptr_t)&gdb_break_handler;
-	gdb_ctx->break_inst[0] = 0x0e;
-	gdb_ctx->break_inst[1] = 0x94;
-	gdb_ctx->break_inst[2] = addr & 0xff;
-	gdb_ctx->break_inst[3] = (addr >> 8) & 0xff;
+	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i) {
+		uint8_t *inst = gdb_ctx->breaks[i].inst;
+		inst[0] = 0x0e;
+		inst[1] = 0x94;
+		inst[2] = addr & 0xff;
+		inst[3] = (addr >> 8) & 0xff;
+	}
 
 	//start uart
 }

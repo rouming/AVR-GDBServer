@@ -64,7 +64,6 @@ struct gdb_context
 			uint8_t ret_addr_l;
 		} *regs;
 		enum gdb_interrupt_reason int_reason;
-		uint8_t break_inst[4];
 		struct gdb_break breaks[MAX_BREAKS];
 		uint8_t breaks_cnt;
 	};
