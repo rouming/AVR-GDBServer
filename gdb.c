@@ -8,6 +8,13 @@
 
 #include "gdb.h"
 
+#define ROUNDUP(x, s) (((x) + (s) - 1) & ~((s) - 1))
+#define ROUNDDOWN(x, s) ((x) & ~((s) - 1))
+
+#if (SPM_PAGESIZE & (SPM_PAGESIZE - 1))
+#error SPM_PAGESIZE is not power of two! Impossible!
+#endif
+
 #define GDB_SAVE_CONTEXT()									\
 	asm volatile (	"push	r0						\n\t"	\
 					"in		r0, __SREG__			\n\t"	\
@@ -141,38 +148,57 @@ void gdb_init(struct gdb_context *ctx)
 	//start uart
 }
 
-/* rom_addr is address in words, i.e. 2 bytes */
+/* rom_addr is address in words, i.e. multiple of two
+   NOTE: interrupts must be disabled before call of this func */
 __attribute__ ((section(".bootloader"),noinline))
-static void __safe_pgm_write_page(void *ram_addr, void *rom_addr,
-								  uint16_t sz)
+static void __safe_pgm_write(void *ram_addr, void *rom_addr,
+							 uint16_t sz)
 {
-	/* interrupts must be already disabled */
+	uintptr_t addr;
+	uint16_t *ram = (uint16_t*)ram_addr;
 
-	/* Sz must not be greater than page and must be even */
-	if (sz > SPM_PAGESIZE || sz & 1)
+	/* Sz must be valid and multiple of two */
+	if (!sz || sz & 1)
 		return;
 
-#define SPM_PAGEMASK ~((uint16_t)SPM_PAGESIZE-1)
-
-	uint16_t page = ((uintptr_t)rom_addr * 2) & SPM_PAGEMASK;
-	uint8_t off = ((uintptr_t)rom_addr * 2) % SPM_PAGESIZE;
-
+	/* Avoid conflicts with EEPROM */
 	eeprom_busy_wait();
 
-	/* Erase and wait until done. */
-	boot_page_erase(page);
-	boot_spm_busy_wait();
+	/* in bytes */
+	addr = (uintptr_t)rom_addr * 2;
 
-	for (uint16_t *ram = (uint16_t*)ram_addr; off < sz;
-		 off += 2, ++ram) {
-		/* Set up little-endian word. */
-		uint16_t w = *ram & 0xff | (*ram << 8);
-		boot_page_fill(page + off, w);
+	for (uintptr_t page = ROUNDDOWN(addr, SPM_PAGESIZE),
+		 end_page = ROUNDUP(addr + sz, SPM_PAGESIZE),
+		 off = addr % SPM_PAGESIZE;
+		 page < end_page;
+		 page += SPM_PAGESIZE, off = 0) {
+
+		/* Fill temporary page */
+		for (uintptr_t page_off = 0;
+			 page_off < SPM_PAGESIZE;
+			 page_off += 2) {
+			/* Fill with word from ram */
+			if (page_off == off) {
+				boot_page_fill(page + off,  *ram);
+				if (sz -= 2) {
+					off += 2;
+					ram += 1;
+				}
+			}
+			/* Fill with word from flash */
+			else
+				boot_page_fill(page + page_off,
+							   pgm_read_word(page + page_off));
+		}
+
+		/* Erase page and wait until done. */
+		boot_page_erase(page);
+		boot_spm_busy_wait();
+
+		/* Write page and wait until done. */
+		boot_page_write(page);
+		boot_spm_busy_wait();
 	}
-
-	/* Store buffer in flash page and wait until done. */
-	boot_page_write(page);
-	boot_spm_busy_wait();
 }
 
 /* rom_addr in words */
@@ -183,7 +209,7 @@ static void gdb_rom_ram_swap_dword(void* rom_addr, void* ram_addr)
 	if (rom_dword == ram_dword)
 		return;
 	*(uint32_t*)ram_addr = rom_dword;
-	__safe_pgm_write_page(&ram_dword, rom_addr, sizeof(ram_dword));
+	__safe_pgm_write(&ram_dword, rom_addr, sizeof(ram_dword));
 }
 
 static void gdb_trap()
