@@ -154,7 +154,7 @@ void gdb_init(struct gdb_context *ctx)
 
 /* rom_addr is address in words, i.e. multiple of two
    NOTE: interrupts must be disabled before call of this func */
-__attribute__ ((section(".bootloader"),noinline))
+__attribute__ ((section(".nrww"),noinline))
 static void __safe_pgm_write(void *ram_addr, void *rom_addr,
 							 uint16_t sz)
 {
