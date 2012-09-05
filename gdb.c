@@ -114,6 +114,15 @@ static void gdb_break_handler()
 {
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->int_reason = gdb_breakpoint;
+	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
+				  (gdb_ctx->regs->ret_addr_l);
+	/* We should continue execution from the PC where CALL
+	   instruction of break handler was, so decrement 2 words
+	   (CALL instruction for AVR is a 32-bit opcode) */
+	gdb_ctx->pc -= 2;
+	/* Replace return address with corrected PC */
+	gdb_ctx->regs->ret_addr_h = (gdb_ctx->pc >> 8) & 0xff;
+	gdb_ctx->regs->ret_addr_l = gdb_ctx->pc & 0xff;
 	gdb_trap();
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("ret \n\t");
@@ -124,6 +133,8 @@ ISR(TIMER0_COMP_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->int_reason = gdb_user_interrupt;
+	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
+				  (gdb_ctx->regs->ret_addr_l);
 	gdb_trap();
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("reti \n\t");
