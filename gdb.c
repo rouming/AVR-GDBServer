@@ -158,8 +158,9 @@ __attribute__ ((section(".nrww"),noinline))
 static void __safe_pgm_write(void *ram_addr, void *rom_addr,
 							 uint16_t sz)
 {
-	uintptr_t addr;
 	uint16_t *ram = (uint16_t*)ram_addr;
+	uintptr_t addr = (uintptr_t)rom_addr;
+	uintptr_t spm_pagesize_w = SPM_PAGESIZE << 1;
 
 	/* Sz must be valid and multiple of two */
 	if (!sz || sz & 1)
@@ -168,31 +169,33 @@ static void __safe_pgm_write(void *ram_addr, void *rom_addr,
 	/* Avoid conflicts with EEPROM */
 	eeprom_busy_wait();
 
-	/* in bytes */
-	addr = (uintptr_t)rom_addr * 2;
+	/* to words */
+	sz >>= 1;
 
-	for (uintptr_t page = ROUNDDOWN(addr, SPM_PAGESIZE),
-		 end_page = ROUNDUP(addr + sz, SPM_PAGESIZE),
-		 off = addr % SPM_PAGESIZE;
+	for (uintptr_t page = ROUNDDOWN(addr, spm_pagesize_w),
+		 end_page = ROUNDUP(addr + sz, spm_pagesize_w),
+		 off = addr % spm_pagesize_w;
 		 page < end_page;
-		 page += SPM_PAGESIZE, off = 0) {
+		 page += spm_pagesize_w, off = 0) {
 
 		/* Fill temporary page */
 		for (uintptr_t page_off = 0;
-			 page_off < SPM_PAGESIZE;
-			 page_off += 2) {
+			 page_off < spm_pagesize_w;
+			 ++page_off) {
+			/* to bytes */
+			uint32_t addr_b = ((uint32_t)page + page_off) << 1;
+
 			/* Fill with word from ram */
 			if (page_off == off) {
-				boot_page_fill(page + off,  *ram);
-				if (sz -= 2) {
-					off += 2;
+				boot_page_fill(addr_b,  *ram);
+				if (sz -= 1) {
+					off += 1;
 					ram += 1;
 				}
 			}
 			/* Fill with word from flash */
 			else
-				boot_page_fill(page + page_off,
-							   pgm_read_word(page + page_off));
+				boot_page_fill(addr_b, pgm_read_word(addr_b));
 		}
 
 		/* Erase page and wait until done. */
