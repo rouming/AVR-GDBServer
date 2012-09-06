@@ -1,5 +1,11 @@
 /******************************************************************************
- * Lightweight GDB server implementation for 8-bit AVR MCU
+ * Lightweight embedded GDB server implementation for
+ * 8-bit AVR MCU with 16 bit PC (i.e. 128kb max ROM)
+ *
+ * NOTE: this code is just a little bit experiment and written
+ *       for fun, so I did not do any attempts to make it
+ *       architecture independent.
+ *
  ******************************************************************************/
 #include <avr/interrupt.h>
 #include <avr/boot.h>
@@ -54,9 +60,7 @@ typedef uint8_t bool_t;
 
 /* This are similar to unix signal numbers.
    See signum.h on unix systems for the values. */
-#define GDB_SIGHUP  1      /* Hangup (POSIX). */
 #define GDB_SIGINT  2      /* Interrupt (ANSI). */
-#define GDB_SIGILL  4      /* Illegal instruction (ANSI). */
 #define GDB_SIGTRAP 5      /* Trace trap (POSIX). */
 
 #define GDB_SAVE_CONTEXT()									\
@@ -147,6 +151,16 @@ typedef uint8_t bool_t;
 					"pop	r0						\n\t"	\
 					)
 
+
+static const uint8_t *gdb_target_desc;
+static uint8_t gdb_target_desc_len;
+
+static const uint8_t *gdb_pkt_sz_desc;
+static uint8_t gdb_pkt_sz_desc_len;
+
+static struct gdb_context *gdb_ctx;
+static void gdb_trap();
+
 /* Convert number 0-15 to hex */
 #define nib2hex(i) (uint8_t)(i > 9 ? 'a' - 10 + i : '0' + i)
 
@@ -173,14 +187,6 @@ static inline bool_t is_32bit_opcode(uint16_t opcode)
 			opcode == STS_OPCODE);
 }
 
-static const uint8_t *gdb_target_desc;
-static uint8_t gdb_target_desc_len;
-
-static const uint8_t *gdb_pkt_sz_desc;
-static uint8_t gdb_pkt_sz_desc_len;
-
-static struct gdb_context *gdb_ctx;
-static void gdb_trap();
 
 /******************************************************************************/
 
@@ -249,6 +255,8 @@ void gdb_init(struct gdb_context *ctx)
 	uintptr_t addr = (uintptr_t)&gdb_break_handler;
 	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i) {
 		uint16_t *opcode = gdb_ctx->breaks[i].opcode;
+		/* NOTE: Assume we are working on device with 16-bits PC,
+		   128Kb memory maximum */
 		opcode[0] = CALL_OPCODE;
 		opcode[1] = addr;
 	}
@@ -463,7 +471,7 @@ static inline bool_t gdb_parse_packet(const char *buff)
 	case 's':               /* step */
 		/* No SIGTRAP when GDB does "Single stepping until
 		   exit from function __vectors" */
-		gdb_send_state(GDB_SIGHUP);
+		gdb_send_state(GDB_SIGTRAP);
 
 		/* TODO: remove previous break
 		   set break on next instruction */
