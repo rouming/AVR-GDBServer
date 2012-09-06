@@ -7,6 +7,8 @@
 #include <stdint.h>
 
 #define MAX_BREAKS 8
+/* must be in hex */
+#define MAX_BUFF   0x40
 
 enum gdb_interrupt_reason
 {
@@ -18,7 +20,7 @@ enum gdb_interrupt_reason
 struct gdb_break
 {
 	void *addr;
-	uint8_t inst[4];
+	uint16_t opcode[2];
 };
 
 struct gdb_context
@@ -63,10 +65,12 @@ struct gdb_context
 			uint8_t ret_addr_h;
 			uint8_t ret_addr_l;
 		} *regs;
-		uint16_t pc;
+		uint32_t pc;
 		enum gdb_interrupt_reason int_reason;
 		struct gdb_break breaks[MAX_BREAKS];
 		uint8_t breaks_cnt;
+		uint8_t buff[MAX_BUFF];
+		uint8_t buff_sz;
 	};
 };
 
