@@ -6,6 +6,10 @@
  *       for fun, so I did not do any attempts to make it
  *       architecture independent.
  *
+ * NOTE: we assume that all string constants that are being
+ *       placed into flash, are located in section < 64K
+ *       addresses, because I don't want to handle far pointers.
+ *
  ******************************************************************************/
 #include <avr/interrupt.h>
 #include <avr/boot.h>
@@ -29,10 +33,6 @@
 
 #define STR(s) #s
 #define STR_VAL(s) STR(s)
-
-typedef uint8_t bool_t;
-#define FALSE 0
-#define TRUE 1
 
 /* CALL, JMP, LDS, STS
    1111 1110 0000 1110 */
@@ -159,7 +159,10 @@ static const uint8_t *gdb_pkt_sz_desc;
 static uint8_t gdb_pkt_sz_desc_len;
 
 static struct gdb_context *gdb_ctx;
+
 static void gdb_trap();
+static void gdb_remove_breakpoint(uint16_t rom_addr);
+static void gdb_send_state(uint8_t signo);
 
 /* Convert number 0-15 to hex */
 #define nib2hex(i) (uint8_t)(i > 9 ? 'a' - 10 + i : '0' + i)
@@ -187,12 +190,21 @@ static inline bool_t is_32bit_opcode(uint16_t opcode)
 			opcode == STS_OPCODE);
 }
 
+static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
+{
+	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
+		if (gdb_ctx->breaks[i].addr == rom_addr)
+			return &gdb_ctx->breaks[i];
+}
+
 /******************************************************************************/
 
 ISR(INT0_vect, ISR_NAKED)
 {
+	struct gdb_break *breakp;
+
+	/* Context save must be the first */
 	GDB_SAVE_CONTEXT();
-	gdb_ctx->int_reason = gdb_breakpoint;
 	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
 				  (gdb_ctx->regs->ret_addr_l);
 	/* We should continue execution from the PC where
@@ -201,8 +213,18 @@ ISR(INT0_vect, ISR_NAKED)
 	/* Replace return address with corrected PC */
 	gdb_ctx->regs->ret_addr_h = (gdb_ctx->pc >> 8) & 0xff;
 	gdb_ctx->regs->ret_addr_l = gdb_ctx->pc & 0xff;
-	/* PC to bytes */
-	gdb_ctx->pc <<= 1;
+
+	/* Set correct interrupt reason */
+	if (gdb_ctx->in_stepi) {
+		/* Remove previous stepi break */
+		gdb_remove_breakpoint(gdb_ctx->pc);
+		gdb_ctx->int_reason = gdb_stepi_breakpoint;
+		gdb_ctx->in_stepi = FALSE;
+	}
+	else
+		gdb_ctx->int_reason = gdb_orig_breakpoint;
+
+	gdb_send_state(GDB_SIGTRAP);
 	gdb_trap();
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("reti \n\t");
@@ -211,11 +233,9 @@ ISR(INT0_vect, ISR_NAKED)
 ISR(USART_RXC_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
-	gdb_ctx->int_reason = gdb_user_interrupt;
 	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
 				  (gdb_ctx->regs->ret_addr_l);
-	/* PC to bytes */
-	gdb_ctx->pc <<= 1;
+	gdb_ctx->int_reason = gdb_user_interrupt;
 	gdb_trap();
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("reti \n\t");
@@ -242,9 +262,9 @@ void gdb_init(struct gdb_context *ctx)
 	/* Init gdb context */
 	gdb_ctx = ctx;
 	gdb_ctx->stack = NULL;
-	gdb_ctx->int_reason = gdb_running;
 	gdb_ctx->breaks_cnt = 0;
 	gdb_ctx->buff_sz = 0;
+	gdb_ctx->in_stepi = FALSE;
 
 	/* Create 16-bit trap opcode for software interrupt */
 	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
@@ -254,42 +274,51 @@ void gdb_init(struct gdb_context *ctx)
 	/* init, start uart */
 }
 
-/* rom_addr and sz are in bytes and must be multiple of two.
+static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b)
+{
+#ifdef pgm_read_word_far
+	if (rom_addr_b >= (1l<<16))
+		return pgm_read_word_far(rom_addr_b);
+	else
+#endif
+		return pgm_read_word(rom_addr_b);
+}
+
+/* rom_addr - in words, sz - in bytes and must be multiple of two.
    NOTE: interrupts must be disabled before call of this func */
 __attribute__ ((section(".nrww"),noinline))
-static void __safe_pgm_write(const void *ram_addr, void *rom_addr,
-							 uint16_t sz)
+static void safe_pgm_write(const void *ram_addr,
+						   uint16_t rom_addr,
+						   uint16_t sz)
 {
 	uint16_t *ram = (uint16_t*)ram_addr;
-	uintptr_t addr = (uintptr_t)rom_addr;
 
-	/* Sz must be valid, addr and sz must be multiple of two */
-	if (!sz || addr & 1 || sz & 1)
+	/* Sz must be valid and be multiple of two */
+	if (!sz || sz & 1)
 		return;
 
 	/* Avoid conflicts with EEPROM */
 	eeprom_busy_wait();
 
 	/* to words */
-	addr >>= 1;
 	sz >>= 1;
 
-	for (uintptr_t page = ROUNDDOWN(addr, SPM_PAGESIZE_W),
-		 end_page = ROUNDUP(addr + sz, SPM_PAGESIZE_W),
-		 off = addr % SPM_PAGESIZE_W;
+	for (uint16_t page = ROUNDDOWN(rom_addr, SPM_PAGESIZE_W),
+		 end_page = ROUNDUP(rom_addr + sz, SPM_PAGESIZE_W),
+		 off = rom_addr % SPM_PAGESIZE_W;
 		 page < end_page;
 		 page += SPM_PAGESIZE_W, off = 0) {
 
 		/* Fill temporary page */
-		for (uintptr_t page_off = 0;
+		for (uint16_t page_off = 0;
 			 page_off < SPM_PAGESIZE_W;
 			 ++page_off) {
 			/* to bytes */
-			uint32_t addr_b = ((uint32_t)page + page_off) << 1;
+			uint32_t rom_addr_b = ((uint32_t)page + page_off) << 1;
 
 			/* Fill with word from ram */
 			if (page_off == off) {
-				boot_page_fill(addr_b,  *ram);
+				boot_page_fill(rom_addr_b,  *ram);
 				if (sz -= 1) {
 					off += 1;
 					ram += 1;
@@ -297,7 +326,7 @@ static void __safe_pgm_write(const void *ram_addr, void *rom_addr,
 			}
 			/* Fill with word from flash */
 			else
-				boot_page_fill(addr_b, pgm_read_word(addr_b));
+				boot_page_fill(rom_addr_b, safe_pgm_read_word(rom_addr_b));
 		}
 
 		/* Erase page and wait until done. */
@@ -310,27 +339,17 @@ static void __safe_pgm_write(const void *ram_addr, void *rom_addr,
 	}
 }
 
-static void gdb_rom_ram_swap_dword(void *rom_addr, void *ram_addr)
+static void gdb_send_byte(uint8_t b)
 {
-	uint32_t rom_dword = pgm_read_dword(rom_addr);
-	uint32_t ram_dword = *(uint32_t*)ram_addr;
-	if (rom_dword == ram_dword)
-		return;
-	*(uint32_t*)ram_addr = rom_dword;
-	__safe_pgm_write(&ram_dword, rom_addr, sizeof(ram_dword));
-}
-
-static void gdb_send_byte(char b)
-{
-	(void)b;
 	/* need to implement */
+	UDR = b;
 }
 
 
 static uint8_t gdb_read_byte()
 {
 	/* todo */
-	return 0;
+	return UDR;
 }
 
 static void gdb_send_buff(const uint8_t *buff, uint8_t off,
@@ -343,6 +362,7 @@ static void gdb_send_buff(const uint8_t *buff, uint8_t off,
 
 	for (uint8_t i = 0; i < sz; ++i) {
 		if (in_pgm)
+			/* NOTE: rom buffer must be located in < 64K address section */
 			b = pgm_read_byte(&buff[i + off]);
 		else
 			b = buff[i + off];
@@ -371,6 +391,8 @@ static void gdb_send_reply(const char *reply)
 
 static void gdb_send_state(uint8_t signo)
 {
+	uint32_t pc = (uint32_t)gdb_ctx->pc << 1;
+
 	gdb_ctx->buff_sz = snprintf_P(gdb_ctx->buff, sizeof(gdb_ctx->buff),
 								  PSTR("T%02x20:%02x;21:%02x%02x;22:%02x%02x"
 									   "%02x%02x;thread:%d;"),
@@ -378,10 +400,10 @@ static void gdb_send_state(uint8_t signo)
 								  gdb_ctx->regs->sreg,
 								  (uintptr_t)gdb_ctx->stack & 0xff,
 								  ((uintptr_t)gdb_ctx->stack >> 8) & 0xff,
-								  gdb_ctx->pc & 0xff,
-								  (gdb_ctx->pc >> 8) & 0xff,
-								  (gdb_ctx->pc >> 16) & 0xff,
-								  (gdb_ctx->pc >> 24) & 0xff,
+								  pc & 0xff,
+								  (pc >> 8) & 0xff,
+								  (pc >> 16) & 0xff,
+								  (pc >> 24) & 0xff,
 								  /* thread id, always 1 */
 								  1);
 
@@ -414,8 +436,87 @@ static void gdb_write_memory()
 {
 }
 
-static void gdb_set_remove_breakpoint()
+static bool_t gdb_insert_breakpoint(uint16_t rom_addr)
 {
+	uint16_t trap_opcode;
+	struct gdb_break *breakp;
+
+	if (gdb_ctx->breaks_cnt == MAX_BREAKS)
+		return FALSE;
+
+	trap_opcode = TRAP_OPCODE;
+	breakp = &gdb_ctx->breaks[gdb_ctx->breaks_cnt++];
+	breakp->addr = rom_addr;
+	breakp->opcode = safe_pgm_read_word((uint32_t)rom_addr << 1);
+	safe_pgm_write(&trap_opcode, breakp->addr, sizeof(trap_opcode));
+	return TRUE;
+}
+
+static void gdb_remove_breakpoint(uint16_t rom_addr)
+{
+	struct gdb_break *breakp = gdb_find_break(rom_addr);
+	safe_pgm_write(&breakp->opcode, breakp->addr, sizeof(breakp->opcode));
+	breakp->addr = 0;
+	gdb_ctx->breaks_cnt--;
+}
+
+static uint8_t gdb_parse_hex(const uint8_t *buff, uint32_t *hex)
+{
+	(void)buff;
+	(void)hex;
+}
+
+static void gdb_insert_remove_breakpoint(const uint8_t *buff)
+{
+	uint32_t rom_addr_b, sz;
+	uint8_t len;
+
+	/* skip 'z0,' */
+	len = gdb_parse_hex(buff + 3, &rom_addr_b);
+	/* skip 'z0,xxx,' */
+	gdb_parse_hex(buff + 3 + len + 1, &sz);
+
+	/* get break type */
+	switch (buff[1]) {
+	case '0': /* software breakpoint */
+		if (buff[0] == 'Z')
+			gdb_insert_breakpoint(rom_addr_b >> 1);
+		else
+			gdb_remove_breakpoint(rom_addr_b >> 1);
+
+		gdb_send_reply("OK");
+
+		break;
+	default:
+		/* we do not support other breakpoints, only software */
+		gdb_send_reply("");
+		break;
+	}
+}
+
+static void gdb_do_stepi()
+{
+	struct gdb_break *breakp;
+	uint16_t opcode;
+	uint16_t next_pc;
+
+	/* gdb guarantees that there will be no any breakpoints
+	   already set on this stepi call, so do not bother about
+	   overlapping breaks. Actually, I did not see this statement
+	   in any gdb docs, but it behaves so (I saw traces). */
+
+	opcode = safe_pgm_read_word((uint32_t)gdb_ctx->pc << 1);
+
+	/* Get next PC */
+	if (is_32bit_opcode(opcode))
+		next_pc = gdb_ctx->pc + 2;
+	else
+		next_pc = gdb_ctx->pc + 1;
+
+	/* We are sure here that breaks are removed and we will not
+	   get any errors, so do not check anything */
+	gdb_insert_breakpoint(next_pc);
+	gdb_ctx->in_stepi = TRUE;
 }
 
 static inline bool_t gdb_parse_packet(const char *buff)
@@ -459,16 +560,11 @@ static inline bool_t gdb_parse_packet(const char *buff)
 		gdb_send_reply(""); /* not supported */
 		break;
 	case 's':               /* step */
-		/* No SIGTRAP when GDB does "Single stepping until
-		   exit from function __vectors" */
-		gdb_send_state(GDB_SIGTRAP);
-
-		/* TODO: remove previous break
-		   set break on next instruction */
+		gdb_do_stepi();
 		return FALSE;
 	case 'z':               /* remove break/watch point */
 	case 'Z':               /* insert break/watch point */
-		gdb_set_remove_breakpoint(gdb_ctx->buff);
+		gdb_insert_remove_breakpoint(gdb_ctx->buff);
 		break;
 	case 'q':               /* query requests */
 		if(memcmp_PF(buff, (uintptr_t)PSTR("qSupported"), 10) == 0) {
