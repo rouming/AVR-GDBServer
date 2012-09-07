@@ -187,20 +187,17 @@ static inline bool_t is_32bit_opcode(uint16_t opcode)
 			opcode == STS_OPCODE);
 }
 
-
 /******************************************************************************/
 
-__attribute__((naked,noinline))
-static void gdb_break_handler()
+ISR(INT0_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->int_reason = gdb_breakpoint;
 	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
 				  (gdb_ctx->regs->ret_addr_l);
-	/* We should continue execution from the PC where CALL
-	   instruction of break handler was, so decrement 2 words
-	   (CALL instruction for AVR is a 32-bit opcode) */
-	gdb_ctx->pc -= 2;
+	/* We should continue execution from the PC where
+	   trap opcode was set, so decrement 1 word */
+	gdb_ctx->pc -= 1;
 	/* Replace return address with corrected PC */
 	gdb_ctx->regs->ret_addr_h = (gdb_ctx->pc >> 8) & 0xff;
 	gdb_ctx->regs->ret_addr_l = gdb_ctx->pc & 0xff;
@@ -208,11 +205,10 @@ static void gdb_break_handler()
 	gdb_ctx->pc <<= 1;
 	gdb_trap();
 	GDB_RESTORE_CONTEXT();
-	asm volatile ("ret \n\t");
+	asm volatile ("reti \n\t");
 }
 
-//ISR(USART_RXC_vect, ISR_NAKED)
-ISR(TIMER0_COMP_vect, ISR_NAKED)
+ISR(USART_RXC_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->int_reason = gdb_user_interrupt;
@@ -250,18 +246,12 @@ void gdb_init(struct gdb_context *ctx)
 	gdb_ctx->breaks_cnt = 0;
 	gdb_ctx->buff_sz = 0;
 
-	/* Create 32-bit CALL opcode with address
-	   of break handler */
-	uintptr_t addr = (uintptr_t)&gdb_break_handler;
-	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i) {
-		uint16_t *opcode = gdb_ctx->breaks[i].opcode;
-		/* NOTE: Assume we are working on device with 16-bits PC,
-		   128Kb memory maximum */
-		opcode[0] = CALL_OPCODE;
-		opcode[1] = addr;
-	}
+	/* Create 16-bit trap opcode for software interrupt */
+	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
+		gdb_ctx->breaks[i].opcode = TRAP_OPCODE;
 
-	//start uart
+	/* init, start int0 software interrupt */
+	/* init, start uart */
 }
 
 /* rom_addr and sz are in bytes and must be multiple of two.
