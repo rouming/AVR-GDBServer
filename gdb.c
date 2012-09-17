@@ -34,14 +34,44 @@
 #define STR(s) #s
 #define STR_VAL(s) STR(s)
 
-/* CALL, JMP, LDS, STS
-   1111 1110 0000 1110 */
-#define MASK_32_OPCODE 0xfe0e
+/* Relative RJMP and RCALL 'k' address mask */
+#define REL_K_MASK   0x0fff
+
+/* ICALL
+   1001 0101 0000 1001
+   PC(15:0) ← Z(15:0) */
+#define ICALL_OPCODE   0x9509
+
+/* RCALL
+   1101 kkkk kkkk kkkk */
+#define RCALL_OPCODE   0xd000
+
+/* EICALL
+   1001 0101 0001 1010
+   PC(15:0) ← Z(15:0)
+   PC(21:16) ← EIND */
+#define EICALL_OPCODE  0x951a
 
 /* CALL
    1001 010k kkkk 111k
    kkkk kkkk kkkk kkkk */
 #define CALL_OPCODE    0x940e
+
+/* IJMP
+   1001 0100 0000 1001
+   PC(15:0) ← Z(15:0) */
+#define IJMP_OPCODE    0x9409
+
+/* RJMP
+   1100 kkkk kkkk kkkk */
+#define RJMP_OPCODE    0xc000
+#define RJMP_K_MASk    0x0fff
+
+/* EIJMP
+   1001 0100 0001 1001
+   PC(15:0) ← Z(15:0)
+   PC(21:16) ← EIND */
+#define EIJMP_OPCODE   0x9419
 
 /* JMP
    1001 010k kkkk 110k
@@ -167,6 +197,7 @@ static struct gdb_context *gdb_ctx;
 static void gdb_trap();
 static void gdb_remove_breakpoint(uint16_t rom_addr);
 static void gdb_send_state(uint8_t signo);
+static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b);
 
 /* Convert number 0-15 to hex */
 #define nib2hex(i) (uint8_t)(i > 9 ? 'a' - 10 + i : '0' + i)
@@ -185,13 +216,26 @@ static inline uint8_t hex2nib(uint8_t hex)
 	return 0;
 }
 
-static inline bool_t is_32bit_opcode(uint16_t opcode)
+static inline uint16_t get_next_pc(uint16_t pc)
 {
-	opcode &= MASK_32_OPCODE;
-	return (opcode == CALL_OPCODE ||
-			opcode == JMP_OPCODE  ||
-			opcode == LDS_OPCODE  ||
-			opcode == STS_OPCODE);
+	uint16_t opcode;
+
+	opcode = safe_pgm_read_word((uint32_t)pc << 1);
+	/* TODO: need to handle devices with 22-bit PC */
+	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE)
+		return safe_pgm_read_word(((uint32_t)pc + 1) << 1);
+	else if (opcode & ICALL_OPCODE || opcode & IJMP_OPCODE ||
+			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE)
+		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
+		return ((uint16_t)gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30;
+	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE)
+		return opcode & REL_K_MASK;
+	/* 32-bit opcode, advance 2 words */
+	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE)
+		return pc + 2;
+	/* 16-bit opcode, advance 1 word */
+	else
+		return pc + 1;
 }
 
 static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
@@ -500,8 +544,6 @@ static void gdb_insert_remove_breakpoint(const uint8_t *buff)
 
 static void gdb_do_stepi()
 {
-	struct gdb_break *breakp;
-	uint16_t opcode;
 	uint16_t next_pc;
 
 	/* gdb guarantees that there will be no any breakpoints
@@ -509,13 +551,7 @@ static void gdb_do_stepi()
 	   overlapping breaks. Actually, I did not see this statement
 	   in any gdb docs, but it behaves so (I saw traces). */
 
-	opcode = safe_pgm_read_word((uint32_t)gdb_ctx->pc << 1);
-
-	/* Get next PC */
-	if (is_32bit_opcode(opcode))
-		next_pc = gdb_ctx->pc + 2;
-	else
-		next_pc = gdb_ctx->pc + 1;
+	next_pc = get_next_pc(gdb_ctx->pc);
 
 	/* We are sure here that breaks are removed and we will not
 	   get any errors, so do not check anything */
