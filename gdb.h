@@ -11,18 +11,6 @@
 /* must be in hex */
 #define MAX_BUFF   0x40
 
-#ifdef __AVR_ATmega16__
-/* We use SBI as trap opcode
-   1001 1010 AAAA Abbb, where AAAAA - mem, bbb - bit */
-#define SBI_OPCODE     0x9a00
-#define SBI_MEM_SHIFT  0x3
-/* For trapping we use software interrupt INT0, for ATmega16 this is PD2 pin */
-#define TRAP_OPCODE (SBI_OPCODE | ((_SFR_IO_ADDR(PORTD)) << SBI_MEM_SHIFT) | PD2)
-#define DEBUG_BREAK asm volatile("sbi %0, %1" :: "I" (_SFR_IO_ADDR(PORTD)), "I"(PD2))
-#else
-#error Unsupported AVR architecture!
-#endif
-
 typedef uint8_t bool_t;
 #define FALSE 0
 #define TRUE 1

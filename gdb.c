@@ -58,6 +58,10 @@
    kkkk kkkk kkkk kkkk */
 #define STS_OPCODE     0x9200
 
+/* For trapping we use RJMP on itself, i.e. endless loop,
+   1100 kkkk kkkk kkkk, where 'k' is a -1 in words */
+#define TRAP_OPCODE 0xcfff
+
 /* This are similar to unix signal numbers.
    See signum.h on unix systems for the values. */
 #define GDB_SIGINT  2      /* Interrupt (ANSI). */
