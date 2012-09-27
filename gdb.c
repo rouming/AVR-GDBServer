@@ -220,6 +220,20 @@ static inline uint16_t get_next_pc(uint16_t pc)
 {
 	uint16_t opcode;
 
+	/*
+	  TODO: need to handle
+	  PC <- STACK
+		  RET, RETI   - [1001 0101 000N 1000]
+	  PC <- PC + 2 or 3
+		  CPSE        - [0001 00rd dddd rrrr]
+		  SBRC, SBRS  - [1111 11Nr rrrr 0bbb]
+		  SBIC, SBIS  - [1001 10N1 AAAA Abbb]
+	  PC <- PC + k + 1
+		  BREQ, BRNE, BRCS, BRCC, BRSH, BRLO, BRMI, BRPL, BRGE,
+		  BRLT, BRHS, BRHC, BRTS, BRTC, BRVS, BRVC, BRIE, BRID
+					  - [1111 0NNN NNNN NNNN]
+	 */
+
 	opcode = safe_pgm_read_word((uint32_t)pc << 1);
 	/* TODO: need to handle devices with 22-bit PC */
 	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE)
