@@ -221,7 +221,9 @@ static uint8_t gdb_pkt_sz_desc_len;
 static struct gdb_context *gdb_ctx;
 
 static void gdb_trap();
+static bool_t gdb_insert_breakpoint(uint16_t rom_addr);
 static void gdb_remove_breakpoint(uint16_t rom_addr);
+static void gdb_remove_breakpoint_ptr(struct gdb_break *breakp);
 static void gdb_send_state(uint8_t signo);
 static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b);
 
@@ -242,37 +244,51 @@ static inline uint8_t hex2nib(uint8_t hex)
 	return 0;
 }
 
-static inline uint16_t get_next_pc(uint16_t pc)
+static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 {
 	uint16_t opcode;
 
 	opcode = safe_pgm_read_word((uint32_t)pc << 1);
 	/* TODO: need to handle devices with 22-bit PC */
-	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE)
-		return safe_pgm_read_word(((uint32_t)pc + 1) << 1);
+	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE) {
+		gdb_insert_breakpoint(safe_pgm_read_word(((uint32_t)pc + 1) << 1));
+		return 1;
+	}
 	else if (opcode & ICALL_OPCODE || opcode & IJMP_OPCODE ||
-			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE)
+			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE) {
 		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
-		return (gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30;
-	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE)
-		return opcode & REL_K_MASK;
-	else if (opcode & RETn_OPCODE)
+		gdb_insert_breakpoint((gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30);
+		return 1;
+	}
+	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE) {
+		gdb_insert_breakpoint(opcode & REL_K_MASK);
+		return 1;
+	}
+	else if (opcode & RETn_OPCODE) {
 		/* Return address will be upper on the stack */
-		return (*(&gdb_ctx->regs->ret_addr_h + 2) << 8) |
-				*(&gdb_ctx->regs->ret_addr_l + 2);
+		gdb_insert_breakpoint((*(&gdb_ctx->regs->ret_addr_h + 2) << 8) |
+							  *(&gdb_ctx->regs->ret_addr_l + 2));
+		return 1;
+	}
 	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
 			 opcode & SBIn_OPCODE) {
 		//TODO: PC <- PC + 1, or PC + 2 or 3
+		return 3;
 	}
 	else if (opcode & BRCH_OPCODE) {
 		//TODO: PC <- PC + 1, or PC + k + 1
+		return 3;
 	}
 	/* 32-bit opcode, advance 2 words */
-	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE)
-		return pc + 2;
+	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE) {
+		gdb_insert_breakpoint(pc + 2);
+		return 1;
+	}
 	/* 16-bit opcode, advance 1 word */
-	else
-		return pc + 1;
+	else {
+		gdb_insert_breakpoint(pc + 1);
+		return 1;
+	}
 }
 
 static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
@@ -300,11 +316,12 @@ ISR(INT0_vect, ISR_NAKED)
 	gdb_ctx->regs->ret_addr_l = gdb_ctx->pc & 0xff;
 
 	/* Set correct interrupt reason */
-	if (gdb_ctx->in_stepi) {
-		/* Remove previous stepi break */
-		gdb_remove_breakpoint(gdb_ctx->pc);
+	if (gdb_ctx->stepi_breaks_cnt) {
+		/* Remove previous stepi breaks */
+		for (uint8_t i = 0; i < gdb_ctx->stepi_breaks_cnt; ++i)
+			gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[i]);
 		gdb_ctx->int_reason = gdb_stepi_breakpoint;
-		gdb_ctx->in_stepi = FALSE;
+		gdb_ctx->stepi_breaks_cnt = 0;
 	}
 	else
 		gdb_ctx->int_reason = gdb_orig_breakpoint;
@@ -349,7 +366,7 @@ void gdb_init(struct gdb_context *ctx)
 	gdb_ctx->stack = NULL;
 	gdb_ctx->breaks_cnt = 0;
 	gdb_ctx->buff_sz = 0;
-	gdb_ctx->in_stepi = FALSE;
+	gdb_ctx->stepi_breaks_cnt = 0;
 
 	/* Create 16-bit trap opcode for software interrupt */
 	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
@@ -537,12 +554,17 @@ static bool_t gdb_insert_breakpoint(uint16_t rom_addr)
 	return TRUE;
 }
 
-static void gdb_remove_breakpoint(uint16_t rom_addr)
+static void gdb_remove_breakpoint_ptr(struct gdb_break *breakp)
 {
-	struct gdb_break *breakp = gdb_find_break(rom_addr);
 	safe_pgm_write(&breakp->opcode, breakp->addr, sizeof(breakp->opcode));
 	breakp->addr = 0;
 	gdb_ctx->breaks_cnt--;
+}
+
+static void gdb_remove_breakpoint(uint16_t rom_addr)
+{
+	struct gdb_break *breakp = gdb_find_break(rom_addr);
+	gdb_remove_breakpoint_ptr(breakp);
 }
 
 static uint8_t gdb_parse_hex(const uint8_t *buff, uint32_t *hex)
@@ -581,19 +603,12 @@ static void gdb_insert_remove_breakpoint(const uint8_t *buff)
 
 static void gdb_do_stepi()
 {
-	uint16_t next_pc;
-
 	/* gdb guarantees that there will be no any breakpoints
 	   already set on this stepi call, so do not bother about
 	   overlapping breaks. Actually, I did not see this statement
 	   in any gdb docs, but it behaves so (I saw traces). */
 
-	next_pc = get_next_pc(gdb_ctx->pc);
-
-	/* We are sure here that breaks are removed and we will not
-	   get any errors, so do not check anything */
-	gdb_insert_breakpoint(next_pc);
-	gdb_ctx->in_stepi = TRUE;
+	gdb_ctx->stepi_breaks_cnt = gdb_insert_breakpoints_on_next_pc(gdb_ctx->pc);
 }
 
 static inline bool_t gdb_parse_packet(const char *buff)
