@@ -37,6 +37,32 @@
 /* Relative RJMP and RCALL 'k' address mask */
 #define REL_K_MASK   0x0fff
 
+/* RET, RETI
+   1001 0101 000N 1000
+   PC(15:0) ← STACK */
+#define RETn_OPCODE    0x9508
+
+/* CPSE
+   0001 00rd dddd rrrr
+   PC <- PC + 1, or PC + 2 or 3 */
+#define CPSE_OPCODE    0x1000
+
+/* SBRC, SBRS
+   1111 11Nr rrrr 0bbb
+   PC <- PC + 1, or PC + 2 or 3 */
+#define SBRn_OPCODE    0xfc00
+
+/* SBIC, SBIS
+   1001 10N1 AAAA Abbb
+   PC <- PC + 1, or PC + 2 or 3 */
+#define SBIn_OPCODE    0x9900
+
+/* BREQ, BRNE, BRCS, BRCC, BRSH, BRLO, BRMI, BRPL, BRGE,
+   BRLT, BRHS, BRHC, BRTS, BRTC, BRVS, BRVC, BRIE, BRID
+   1111 0Nkk kkkk kNNN
+   PC <- PC + 1, or PC + k + 1 */
+#define BRCH_OPCODE    0xf000
+
 /* ICALL
    1001 0101 0000 1001
    PC(15:0) ← Z(15:0) */
@@ -49,7 +75,7 @@
 /* EICALL
    1001 0101 0001 1010
    PC(15:0) ← Z(15:0)
-   PC(21:16) ← EIND */
+   PC(21:16) ← EIND (TODO) */
 #define EICALL_OPCODE  0x951a
 
 /* CALL
@@ -70,7 +96,7 @@
 /* EIJMP
    1001 0100 0001 1001
    PC(15:0) ← Z(15:0)
-   PC(21:16) ← EIND */
+   PC(21:16) ← EIND (TODO) */
 #define EIJMP_OPCODE   0x9419
 
 /* JMP
@@ -220,20 +246,6 @@ static inline uint16_t get_next_pc(uint16_t pc)
 {
 	uint16_t opcode;
 
-	/*
-	  TODO: need to handle
-	  PC <- STACK
-		  RET, RETI   - [1001 0101 000N 1000]
-	  PC <- PC + 2 or 3
-		  CPSE        - [0001 00rd dddd rrrr]
-		  SBRC, SBRS  - [1111 11Nr rrrr 0bbb]
-		  SBIC, SBIS  - [1001 10N1 AAAA Abbb]
-	  PC <- PC + k + 1
-		  BREQ, BRNE, BRCS, BRCC, BRSH, BRLO, BRMI, BRPL, BRGE,
-		  BRLT, BRHS, BRHC, BRTS, BRTC, BRVS, BRVC, BRIE, BRID
-					  - [1111 0NNN NNNN NNNN]
-	 */
-
 	opcode = safe_pgm_read_word((uint32_t)pc << 1);
 	/* TODO: need to handle devices with 22-bit PC */
 	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE)
@@ -244,6 +256,17 @@ static inline uint16_t get_next_pc(uint16_t pc)
 		return (gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30;
 	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE)
 		return opcode & REL_K_MASK;
+	else if (opcode & RETn_OPCODE)
+		/* Return address will be upper on the stack */
+		return (*(&gdb_ctx->regs->ret_addr_h + 2) << 8) |
+				*(&gdb_ctx->regs->ret_addr_l + 2);
+	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
+			 opcode & SBIn_OPCODE) {
+		//TODO: PC <- PC + 1, or PC + 2 or 3
+	}
+	else if (opcode & BRCH_OPCODE) {
+		//TODO: PC <- PC + 1, or PC + k + 1
+	}
 	/* 32-bit opcode, advance 2 words */
 	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE)
 		return pc + 2;
