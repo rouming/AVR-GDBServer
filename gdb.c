@@ -241,7 +241,7 @@ static inline uint16_t get_next_pc(uint16_t pc)
 	else if (opcode & ICALL_OPCODE || opcode & IJMP_OPCODE ||
 			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE)
 		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
-		return ((uint16_t)gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30;
+		return (gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30;
 	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE)
 		return opcode & REL_K_MASK;
 	/* 32-bit opcode, advance 2 words */
