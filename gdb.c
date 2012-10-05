@@ -225,11 +225,9 @@ static uint8_t gdb_pkt_sz_desc_len;
 static struct gdb_context *gdb_ctx;
 
 static void gdb_trap();
-static bool_t gdb_insert_breakpoint(uint16_t rom_addr);
-static void gdb_remove_breakpoint(uint16_t rom_addr);
+static inline struct gdb_break *gdb_find_break(uint16_t rom_addr);
 static void gdb_remove_breakpoint_ptr(struct gdb_break *breakp);
 static void gdb_send_state(uint8_t signo);
-static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b);
 
 /* Convert number 0-15 to hex */
 #define nib2hex(i) (uint8_t)(i > 9 ? 'a' - 10 + i : '0' + i)
@@ -248,70 +246,69 @@ static inline uint8_t hex2nib(uint8_t hex)
 	return 0;
 }
 
-static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
+static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b)
 {
-	uint16_t opcode;
-
-	opcode = safe_pgm_read_word((uint32_t)pc << 1);
-	/* TODO: need to handle devices with 22-bit PC */
-	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE) {
-		gdb_insert_breakpoint(safe_pgm_read_word(((uint32_t)pc + 1) << 1));
-		return 1;
-	}
-	else if (opcode & ICALL_OPCODE || opcode & IJMP_OPCODE ||
-			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE) {
-		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
-		gdb_insert_breakpoint((gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30);
-		return 1;
-	}
-	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE) {
-		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
-		return 1;
-	}
-	else if (opcode & RETn_OPCODE) {
-		/* Return address will be upper on the stack */
-		gdb_insert_breakpoint((*(&gdb_ctx->regs->ret_addr_h + 2) << 8) |
-							  *(&gdb_ctx->regs->ret_addr_l + 2));
-		return 1;
-	}
-	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
-			 opcode & SBIn_OPCODE) {
-		/* These opcodes can jump to pc + 1, + 2 or + 3.
-		   To avoid additional logic we simply set breaks on all of them */
-		gdb_insert_breakpoint(pc + 1);
-		gdb_insert_breakpoint(pc + 2);
-		gdb_insert_breakpoint(pc + 3);
-		return 3;
-	}
-	else if (opcode & BRCH_OPCODE) {
-		/* These opcodes can jump to pc + 1, + k + 1.
-		   To avoid additional logic we simply set breaks on all of them */
-		int8_t k = (opcode & BRCH_K_MASK) >> BRCH_K_SHIFT;
-		/* k is 7-bits value and can be negative, so stretch 7 sign bit
-		   over other bits */
-		if (k & 0x40)
-			k |= 0x80;
-		gdb_insert_breakpoint(pc + 1);
-		gdb_insert_breakpoint(pc + k + 1);
-		return 2;
-	}
-	/* 32-bit opcode, advance 2 words */
-	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE) {
-		gdb_insert_breakpoint(pc + 2);
-		return 1;
-	}
-	/* 16-bit opcode, advance 1 word */
-	else {
-		gdb_insert_breakpoint(pc + 1);
-		return 1;
-	}
+#ifdef pgm_read_word_far
+	if (rom_addr_b >= (1l<<16))
+		return pgm_read_word_far(rom_addr_b);
+	else
+#endif
+		return pgm_read_word(rom_addr_b);
 }
 
-static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
+/* rom_addr - in words, sz - in bytes and must be multiple of two.
+   NOTE: interrupts must be disabled before call of this func */
+__attribute__ ((section(".nrww"),noinline))
+static void safe_pgm_write(const void *ram_addr,
+						   uint16_t rom_addr,
+						   uint16_t sz)
 {
-	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
-		if (gdb_ctx->breaks[i].addr == rom_addr)
-			return &gdb_ctx->breaks[i];
+	uint16_t *ram = (uint16_t*)ram_addr;
+
+	/* Sz must be valid and be multiple of two */
+	if (!sz || sz & 1)
+		return;
+
+	/* Avoid conflicts with EEPROM */
+	eeprom_busy_wait();
+
+	/* to words */
+	sz >>= 1;
+
+	for (uint16_t page = ROUNDDOWN(rom_addr, SPM_PAGESIZE_W),
+		 end_page = ROUNDUP(rom_addr + sz, SPM_PAGESIZE_W),
+		 off = rom_addr % SPM_PAGESIZE_W;
+		 page < end_page;
+		 page += SPM_PAGESIZE_W, off = 0) {
+
+		/* Fill temporary page */
+		for (uint16_t page_off = 0;
+			 page_off < SPM_PAGESIZE_W;
+			 ++page_off) {
+			/* to bytes */
+			uint32_t rom_addr_b = ((uint32_t)page + page_off) << 1;
+
+			/* Fill with word from ram */
+			if (page_off == off) {
+				boot_page_fill(rom_addr_b,  *ram);
+				if (sz -= 1) {
+					off += 1;
+					ram += 1;
+				}
+			}
+			/* Fill with word from flash */
+			else
+				boot_page_fill(rom_addr_b, safe_pgm_read_word(rom_addr_b));
+		}
+
+		/* Erase page and wait until done. */
+		boot_page_erase(page);
+		boot_spm_busy_wait();
+
+		/* Write page and wait until done. */
+		boot_page_write(page);
+		boot_spm_busy_wait();
+	}
 }
 
 /******************************************************************************/
@@ -392,71 +389,6 @@ void gdb_init(struct gdb_context *ctx)
 
 	/* init, start int0 software interrupt */
 	/* init, start uart */
-}
-
-static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b)
-{
-#ifdef pgm_read_word_far
-	if (rom_addr_b >= (1l<<16))
-		return pgm_read_word_far(rom_addr_b);
-	else
-#endif
-		return pgm_read_word(rom_addr_b);
-}
-
-/* rom_addr - in words, sz - in bytes and must be multiple of two.
-   NOTE: interrupts must be disabled before call of this func */
-__attribute__ ((section(".nrww"),noinline))
-static void safe_pgm_write(const void *ram_addr,
-						   uint16_t rom_addr,
-						   uint16_t sz)
-{
-	uint16_t *ram = (uint16_t*)ram_addr;
-
-	/* Sz must be valid and be multiple of two */
-	if (!sz || sz & 1)
-		return;
-
-	/* Avoid conflicts with EEPROM */
-	eeprom_busy_wait();
-
-	/* to words */
-	sz >>= 1;
-
-	for (uint16_t page = ROUNDDOWN(rom_addr, SPM_PAGESIZE_W),
-		 end_page = ROUNDUP(rom_addr + sz, SPM_PAGESIZE_W),
-		 off = rom_addr % SPM_PAGESIZE_W;
-		 page < end_page;
-		 page += SPM_PAGESIZE_W, off = 0) {
-
-		/* Fill temporary page */
-		for (uint16_t page_off = 0;
-			 page_off < SPM_PAGESIZE_W;
-			 ++page_off) {
-			/* to bytes */
-			uint32_t rom_addr_b = ((uint32_t)page + page_off) << 1;
-
-			/* Fill with word from ram */
-			if (page_off == off) {
-				boot_page_fill(rom_addr_b,  *ram);
-				if (sz -= 1) {
-					off += 1;
-					ram += 1;
-				}
-			}
-			/* Fill with word from flash */
-			else
-				boot_page_fill(rom_addr_b, safe_pgm_read_word(rom_addr_b));
-		}
-
-		/* Erase page and wait until done. */
-		boot_page_erase(page);
-		boot_spm_busy_wait();
-
-		/* Write page and wait until done. */
-		boot_page_write(page);
-		boot_spm_busy_wait();
-	}
 }
 
 static void gdb_send_byte(uint8_t b)
@@ -583,6 +515,72 @@ static void gdb_remove_breakpoint(uint16_t rom_addr)
 {
 	struct gdb_break *breakp = gdb_find_break(rom_addr);
 	gdb_remove_breakpoint_ptr(breakp);
+}
+
+static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
+{
+	uint16_t opcode;
+
+	opcode = safe_pgm_read_word((uint32_t)pc << 1);
+	/* TODO: need to handle devices with 22-bit PC */
+	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE) {
+		gdb_insert_breakpoint(safe_pgm_read_word(((uint32_t)pc + 1) << 1));
+		return 1;
+	}
+	else if (opcode & ICALL_OPCODE || opcode & IJMP_OPCODE ||
+			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE) {
+		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
+		gdb_insert_breakpoint((gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30);
+		return 1;
+	}
+	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE) {
+		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
+		return 1;
+	}
+	else if (opcode & RETn_OPCODE) {
+		/* Return address will be upper on the stack */
+		gdb_insert_breakpoint((*(&gdb_ctx->regs->ret_addr_h + 2) << 8) |
+							  *(&gdb_ctx->regs->ret_addr_l + 2));
+		return 1;
+	}
+	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
+			 opcode & SBIn_OPCODE) {
+		/* These opcodes can jump to pc + 1, + 2 or + 3.
+		   To avoid additional logic we simply set breaks on all of them */
+		gdb_insert_breakpoint(pc + 1);
+		gdb_insert_breakpoint(pc + 2);
+		gdb_insert_breakpoint(pc + 3);
+		return 3;
+	}
+	else if (opcode & BRCH_OPCODE) {
+		/* These opcodes can jump to pc + 1, + k + 1.
+		   To avoid additional logic we simply set breaks on all of them */
+		int8_t k = (opcode & BRCH_K_MASK) >> BRCH_K_SHIFT;
+		/* k is 7-bits value and can be negative, so stretch 7 sign bit
+		   over other bits */
+		if (k & 0x40)
+			k |= 0x80;
+		gdb_insert_breakpoint(pc + 1);
+		gdb_insert_breakpoint(pc + k + 1);
+		return 2;
+	}
+	/* 32-bit opcode, advance 2 words */
+	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE) {
+		gdb_insert_breakpoint(pc + 2);
+		return 1;
+	}
+	/* 16-bit opcode, advance 1 word */
+	else {
+		gdb_insert_breakpoint(pc + 1);
+		return 1;
+	}
+}
+
+static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
+{
+	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
+		if (gdb_ctx->breaks[i].addr == rom_addr)
+			return &gdb_ctx->breaks[i];
 }
 
 static uint8_t gdb_parse_hex(const uint8_t *buff, uint32_t *hex)
