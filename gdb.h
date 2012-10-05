@@ -74,7 +74,7 @@ struct gdb_context
 		enum gdb_interrupt_reason int_reason;
 		struct gdb_break breaks[MAX_BREAKS];
 		uint8_t breaks_cnt;
-		uint8_t stepi_breaks_cnt;
+		bool_t  in_stepi;
 		uint8_t buff[MAX_BUFF];
 		uint8_t buff_sz;
 	};

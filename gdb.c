@@ -329,14 +329,12 @@ ISR(INT0_vect, ISR_NAKED)
 	gdb_ctx->regs->ret_addr_l = gdb_ctx->pc & 0xff;
 
 	/* Set correct interrupt reason */
-	if (gdb_ctx->stepi_breaks_cnt) {
-		/* Remove previous stepi breaks.
-		   NOTE: we are sure here, that there are no any other breaks
-				 (gdb host guarantees), so, iterate from the first break */
-		for (uint8_t i = 0; i < gdb_ctx->stepi_breaks_cnt; ++i)
-			gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[i]);
+	if (gdb_ctx->in_stepi) {
+		/* Remove all previous stepi breaks */
+		while (gdb_ctx->breaks_cnt)
+			gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[gdb_ctx->breaks_cnt-1]);
 		gdb_ctx->int_reason = gdb_stepi_breakpoint;
-		gdb_ctx->stepi_breaks_cnt = 0;
+		gdb_ctx->in_stepi = FALSE;
 	}
 	else
 		gdb_ctx->int_reason = gdb_orig_breakpoint;
@@ -381,7 +379,7 @@ void gdb_init(struct gdb_context *ctx)
 	gdb_ctx->stack = NULL;
 	gdb_ctx->breaks_cnt = 0;
 	gdb_ctx->buff_sz = 0;
-	gdb_ctx->stepi_breaks_cnt = 0;
+	gdb_ctx->in_stepi = FALSE;
 
 	/* Create 16-bit trap opcode for software interrupt */
 	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
@@ -517,32 +515,24 @@ static void gdb_remove_breakpoint(uint16_t rom_addr)
 	gdb_remove_breakpoint_ptr(breakp);
 }
 
-static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
+static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 {
 	uint16_t opcode;
 
 	opcode = safe_pgm_read_word((uint32_t)pc << 1);
 	/* TODO: need to handle devices with 22-bit PC */
-	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE) {
+	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE)
 		gdb_insert_breakpoint(safe_pgm_read_word(((uint32_t)pc + 1) << 1));
-		return 1;
-	}
 	else if (opcode & ICALL_OPCODE || opcode & IJMP_OPCODE ||
-			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE) {
+			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE)
 		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
 		gdb_insert_breakpoint((gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30);
-		return 1;
-	}
-	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE) {
+	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE)
 		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
-		return 1;
-	}
-	else if (opcode & RETn_OPCODE) {
+	else if (opcode & RETn_OPCODE)
 		/* Return address will be upper on the stack */
 		gdb_insert_breakpoint((*(&gdb_ctx->regs->ret_addr_h + 2) << 8) |
 							  *(&gdb_ctx->regs->ret_addr_l + 2));
-		return 1;
-	}
 	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
 			 opcode & SBIn_OPCODE) {
 		/* These opcodes can jump to pc + 1, + 2 or + 3.
@@ -550,7 +540,6 @@ static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 		gdb_insert_breakpoint(pc + 1);
 		gdb_insert_breakpoint(pc + 2);
 		gdb_insert_breakpoint(pc + 3);
-		return 3;
 	}
 	else if (opcode & BRCH_OPCODE) {
 		/* These opcodes can jump to pc + 1, + k + 1.
@@ -562,18 +551,13 @@ static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 			k |= 0x80;
 		gdb_insert_breakpoint(pc + 1);
 		gdb_insert_breakpoint(pc + k + 1);
-		return 2;
 	}
 	/* 32-bit opcode, advance 2 words */
-	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE) {
+	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE)
 		gdb_insert_breakpoint(pc + 2);
-		return 1;
-	}
 	/* 16-bit opcode, advance 1 word */
-	else {
+	else
 		gdb_insert_breakpoint(pc + 1);
-		return 1;
-	}
 }
 
 static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
@@ -624,7 +608,8 @@ static void gdb_do_stepi()
 	   overlapping breaks. Actually, I did not see this statement
 	   in any gdb docs, but it behaves so (I saw traces). */
 
-	gdb_ctx->stepi_breaks_cnt = gdb_insert_breakpoints_on_next_pc(gdb_ctx->pc);
+	gdb_insert_breakpoints_on_next_pc(gdb_ctx->pc);
+	gdb_ctx->in_stepi = TRUE;
 }
 
 static inline bool_t gdb_parse_packet(const char *buff)
