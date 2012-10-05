@@ -242,8 +242,15 @@ static inline uint8_t hex2nib(uint8_t hex)
 	else if (hex >= '0' && hex <= '9')
 		return hex - '0';
 
-	/* unreachable line */
 	return 0;
+}
+
+static inline uint8_t parse_hex(const uint8_t *buff, uint32_t *hex)
+{
+	uint8_t nib, len;
+	for (*hex = 0, len = 0; (nib = hex2nib(buff[len])); ++len)
+		*hex = (*hex << 4) + nib;
+	return len;
 }
 
 static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b)
@@ -566,22 +573,15 @@ static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
 	return NULL;
 }
 
-static uint8_t gdb_parse_hex(const uint8_t *buff, uint32_t *hex)
-{
-	(void)buff;
-	*hex = 0;
-	return 0;
-}
-
 static void gdb_insert_remove_breakpoint(const uint8_t *buff)
 {
 	uint32_t rom_addr_b, sz;
 	uint8_t len;
 
 	/* skip 'z0,' */
-	len = gdb_parse_hex(buff + 3, &rom_addr_b);
+	len = parse_hex(buff + 3, &rom_addr_b);
 	/* skip 'z0,xxx,' */
-	gdb_parse_hex(buff + 3 + len + 1, &sz);
+	parse_hex(buff + 3 + len + 1, &sz);
 
 	/* get break type */
 	switch (buff[1]) {
