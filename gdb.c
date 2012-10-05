@@ -35,7 +35,8 @@
 #define STR_VAL(s) STR(s)
 
 /* Relative RJMP and RCALL 'k' address mask */
-#define REL_K_MASK   0x0fff
+#define REL_K_MASK     0x0fff
+#define REL_K_SHIFT    0
 
 /* RET, RETI
    1001 0101 000N 1000
@@ -62,6 +63,10 @@
    1111 0Nkk kkkk kNNN
    PC <- PC + 1, or PC + k + 1 */
 #define BRCH_OPCODE    0xf000
+
+/* 'k' address mask for all branch opcodes */
+#define BRCH_K_MASK    0x03f8
+#define BRCH_K_SHIFT   3
 
 /* ICALL
    1001 0101 0000 1001
@@ -91,7 +96,6 @@
 /* RJMP
    1100 kkkk kkkk kkkk */
 #define RJMP_OPCODE    0xc000
-#define RJMP_K_MASk    0x0fff
 
 /* EIJMP
    1001 0100 0001 1001
@@ -261,7 +265,7 @@ static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 		return 1;
 	}
 	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE) {
-		gdb_insert_breakpoint(opcode & REL_K_MASK);
+		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
 		return 1;
 	}
 	else if (opcode & RETn_OPCODE) {
@@ -272,12 +276,24 @@ static uint8_t gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 	}
 	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
 			 opcode & SBIn_OPCODE) {
-		//TODO: PC <- PC + 1, or PC + 2 or 3
+		/* These opcodes can jump to pc + 1, + 2 or + 3.
+		   To avoid additional logic we simply set breaks on all of them */
+		gdb_insert_breakpoint(pc + 1);
+		gdb_insert_breakpoint(pc + 2);
+		gdb_insert_breakpoint(pc + 3);
 		return 3;
 	}
 	else if (opcode & BRCH_OPCODE) {
-		//TODO: PC <- PC + 1, or PC + k + 1
-		return 3;
+		/* These opcodes can jump to pc + 1, + k + 1.
+		   To avoid additional logic we simply set breaks on all of them */
+		int8_t k = (opcode & BRCH_K_MASK) >> BRCH_K_SHIFT;
+		/* k is 7-bits value and can be negative, so stretch 7 sign bit
+		   over other bits */
+		if (k & 0x40)
+			k |= 0x80;
+		gdb_insert_breakpoint(pc + 1);
+		gdb_insert_breakpoint(pc + k + 1);
+		return 2;
 	}
 	/* 32-bit opcode, advance 2 words */
 	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE) {
@@ -317,7 +333,9 @@ ISR(INT0_vect, ISR_NAKED)
 
 	/* Set correct interrupt reason */
 	if (gdb_ctx->stepi_breaks_cnt) {
-		/* Remove previous stepi breaks */
+		/* Remove previous stepi breaks.
+		   NOTE: we are sure here, that there are no any other breaks
+				 (gdb host guarantees), so, iterate from the first break */
 		for (uint8_t i = 0; i < gdb_ctx->stepi_breaks_cnt; ++i)
 			gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[i]);
 		gdb_ctx->int_reason = gdb_stepi_breakpoint;
