@@ -230,7 +230,7 @@ static void gdb_remove_breakpoint_ptr(struct gdb_break *breakp);
 static void gdb_send_state(uint8_t signo);
 
 /* Convert number 0-15 to hex */
-#define nib2hex(i) (uint8_t)(i > 9 ? 'a' - 10 + i : '0' + i)
+#define nib2hex(i) (uint8_t)((i) > 9 ? 'a' - 10 + (i) : '0' + (i))
 
 /* Convert a hexidecimal digit to a 4 bit nibble. */
 static inline uint8_t hex2nib(uint8_t hex)
@@ -315,8 +315,6 @@ static void safe_pgm_write(const void *ram_addr,
 
 ISR(INT0_vect, ISR_NAKED)
 {
-	struct gdb_break *breakp;
-
 	/* Context save must be the first */
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
@@ -361,7 +359,7 @@ ISR(USART_RXC_vect, ISR_NAKED)
 void gdb_init(struct gdb_context *ctx)
 {
 	/* Init static ptrs to program mem */
-	gdb_target_desc = PSTR(
+	gdb_target_desc = (uint8_t*)PSTR(
 		"<?xml version=\"1.0\"?>\n"
 		"<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n"
 		"<target version=\"1.0\">\n"
@@ -370,7 +368,7 @@ void gdb_init(struct gdb_context *ctx)
 	gdb_target_desc_len = strlen_PF((uintptr_t)gdb_target_desc);
 
 	/* NOTE: PacketSize=0xXX, i.e. MAX_BUFF must be in hex */
-	gdb_pkt_sz_desc = PSTR(
+	gdb_pkt_sz_desc = (uint8_t*)PSTR(
 		"PacketSize=" STR_VAL(MAX_BUFF) ";qXfer:features:read+");
 	gdb_pkt_sz_desc_len = strlen_PF((uintptr_t)gdb_pkt_sz_desc);
 
@@ -443,7 +441,7 @@ static void gdb_send_state(uint8_t signo)
 {
 	uint32_t pc = (uint32_t)gdb_ctx->pc << 1;
 
-	gdb_ctx->buff_sz = snprintf_P(gdb_ctx->buff, sizeof(gdb_ctx->buff),
+	gdb_ctx->buff_sz = snprintf_P((char*)gdb_ctx->buff, sizeof(gdb_ctx->buff),
 								  PSTR("T%02x20:%02x;21:%02x%02x;22:%02x%02x"
 									   "%02x%02x;thread:%d;"),
 								  signo,
@@ -565,12 +563,14 @@ static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
 	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
 		if (gdb_ctx->breaks[i].addr == rom_addr)
 			return &gdb_ctx->breaks[i];
+	return NULL;
 }
 
 static uint8_t gdb_parse_hex(const uint8_t *buff, uint32_t *hex)
 {
 	(void)buff;
-	(void)hex;
+	*hex = 0;
+	return 0;
 }
 
 static void gdb_insert_remove_breakpoint(const uint8_t *buff)
@@ -612,7 +612,7 @@ static void gdb_do_stepi()
 	gdb_ctx->in_stepi = TRUE;
 }
 
-static inline bool_t gdb_parse_packet(const char *buff)
+static inline bool_t gdb_parse_packet(const uint8_t *buff)
 {
 	switch (*buff) {
 	case '?':               /* last signal */

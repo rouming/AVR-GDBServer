@@ -14,4 +14,4 @@ RAM_SZ=1024
 CLK=16000000UL
 
 all:
-	avr-gcc -O3  -g -gdwarf-2 -std=gnu99 -mmcu=atmega16 -DF_CPU=16000000UL -o gdb.elf gdb.c main.c -Wl,--section-start=.nrww=0x1C00
+	avr-gcc -Wall  -O3  -g -gdwarf-2 -std=gnu99 -mmcu=atmega16 -DF_CPU=16000000UL -o gdb.elf gdb.c main.c -Wl,--section-start=.nrww=0x1C00
