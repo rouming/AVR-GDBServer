@@ -324,14 +324,14 @@ ISR(INT0_vect, ISR_NAKED)
 {
 	/* Context save must be the first */
 	GDB_SAVE_CONTEXT();
-	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
-				  (gdb_ctx->regs->ret_addr_l);
+	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
+				  (gdb_ctx->regs->pc_l);
 	/* We should continue execution from the PC where
 	   trap opcode was set, so decrement 1 word */
 	gdb_ctx->pc -= 1;
 	/* Replace return address with corrected PC */
-	gdb_ctx->regs->ret_addr_h = (gdb_ctx->pc >> 8) & 0xff;
-	gdb_ctx->regs->ret_addr_l = gdb_ctx->pc & 0xff;
+	gdb_ctx->regs->pc_h = (gdb_ctx->pc >> 8) & 0xff;
+	gdb_ctx->regs->pc_l = gdb_ctx->pc & 0xff;
 
 	/* Set correct interrupt reason */
 	if (gdb_ctx->in_stepi) {
@@ -353,8 +353,8 @@ ISR(INT0_vect, ISR_NAKED)
 ISR(USART_RXC_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
-	gdb_ctx->pc = (gdb_ctx->regs->ret_addr_h << 8) |
-				  (gdb_ctx->regs->ret_addr_l);
+	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
+				  (gdb_ctx->regs->pc_l);
 	gdb_ctx->int_reason = gdb_user_interrupt;
 	gdb_trap();
 	GDB_RESTORE_CONTEXT();
@@ -381,7 +381,7 @@ void gdb_init(struct gdb_context *ctx)
 
 	/* Init gdb context */
 	gdb_ctx = ctx;
-	gdb_ctx->stack = NULL;
+	gdb_ctx->sp = 0;
 	gdb_ctx->breaks_cnt = 0;
 	gdb_ctx->buff_sz = 0;
 	gdb_ctx->in_stepi = FALSE;
@@ -453,8 +453,8 @@ static void gdb_send_state(uint8_t signo)
 									   "%02x%02x;thread:%d;"),
 								  signo,
 								  gdb_ctx->regs->sreg,
-								  (uintptr_t)gdb_ctx->stack & 0xff,
-								  ((uintptr_t)gdb_ctx->stack >> 8) & 0xff,
+								  gdb_ctx->sp & 0xff,
+								  (gdb_ctx->sp >> 8) & 0xff,
 								  pc & 0xff,
 								  (pc >> 8) & 0xff,
 								  (pc >> 16) & 0xff,
@@ -536,8 +536,8 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
 	else if (opcode & RETn_OPCODE)
 		/* Return address will be upper on the stack */
-		gdb_insert_breakpoint((*(&gdb_ctx->regs->ret_addr_h + 2) << 8) |
-							  *(&gdb_ctx->regs->ret_addr_l + 2));
+		gdb_insert_breakpoint((*(&gdb_ctx->regs->pc_h + 2) << 8) |
+							   *(&gdb_ctx->regs->pc_l + 2));
 	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
 			 opcode & SBIn_OPCODE) {
 		/* These opcodes can jump to pc + 1, + 2 or + 3.

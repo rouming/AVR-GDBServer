@@ -31,7 +31,7 @@ struct gdb_break
 struct gdb_context
 {
 	union {
-		uint8_t *stack;
+		uint16_t sp;
 		struct {
 			uint8_t stack_bottom;
 			uint8_t r31;
@@ -67,8 +67,8 @@ struct gdb_context
 			uint8_t r1;
 			uint8_t sreg;
 			uint8_t r0;
-			uint8_t ret_addr_h;
-			uint8_t ret_addr_l;
+			uint8_t pc_h;
+			uint8_t pc_l;
 		} *regs;
 	};
 	uint16_t pc;
