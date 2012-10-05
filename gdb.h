@@ -8,8 +8,9 @@
 #include <stdint.h>
 
 #define MAX_BREAKS 8
-/* must be in hex */
-#define MAX_BUFF   0x40
+/* must be in hex, and not fewer than 79 bytes,
+   see gdb_read_registers for details */
+#define MAX_BUFF   0x50
 
 typedef uint8_t bool_t;
 #define FALSE 0

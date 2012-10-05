@@ -473,27 +473,71 @@ static void gdb_send_state(uint8_t signo)
 				  FALSE, FALSE);
 }
 
+/* GDB needs the 32 8-bit, gpw registers (r00 - r31), the
+   8-bit SREG, the 16-bit SP (stack pointer) and the 32-bit PC
+   (program counter). Thus need to send a reply with
+   r00, r01, ..., r31, SREG, SPL, SPH, PCL, PCH,
+   low bytes before high since AVR is little endian.
+   This routine requires (32 gpwr, SREG, SP, PC) * 2 hex bytes
+   space of buffer, i.e. min (32 + 1 + 2 + 4) * 2 = 78 */
 static void gdb_read_registers()
 {
+	uint32_t pc = (uint32_t)gdb_ctx->pc << 1;
+	uint8_t i = 0;
+
+	/* send r0 */
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->r0 >> 4) & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->r0 >> 0) & 0xf);
+
+	/* send r1..r31 */
+	for (uint8_t *ptr = &gdb_ctx->regs->r1; i < 31*2; --ptr) {
+		gdb_ctx->buff[i++] = nib2hex((*ptr >> 4) & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((*ptr >> 0) & 0xf);
+	}
+
+	/* send SREG as 32 register */
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->sreg >> 4) & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->sreg >> 0) & 0xf);
+
+	/* send SP as 33 register */
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 4)  & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 0)  & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 12) & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 8)  & 0xf);
+
+	/* send PC as 34 register
+	   gdb stores PC in a 32 bit value.
+	   gdb thinks PC is bytes into flash, not in words. */
+	gdb_ctx->buff[i++] = nib2hex((pc >> 4)  & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((pc >> 0)  & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((pc >> 12) & 0xf);
+	gdb_ctx->buff[i++] = nib2hex((pc >> 8)  & 0xf);
+	gdb_ctx->buff[i++] = '0'; /* TODO: 22-bits not supported now */
+	gdb_ctx->buff[i++] = nib2hex((pc >> 16) & 0xf);
+	gdb_ctx->buff[i++] = '0'; /* gdb wants 32-bit value, send 0 */
+	gdb_ctx->buff[i++] = '0'; /* gdb wants 32-bit value, send 0 */
+
+	gdb_ctx->buff_sz = i;
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
 }
 
 static void gdb_write_registers()
 {
 }
 
-static void gdb_read_register()
+static void gdb_read_register(const uint8_t *buff)
 {
 }
 
-static void gdb_write_register()
+static void gdb_write_register(const uint8_t *buff)
 {
 }
 
-static void gdb_read_memory()
+static void gdb_read_memory(const uint8_t *buff)
 {
 }
 
-static void gdb_write_memory()
+static void gdb_write_memory(const uint8_t *buff)
 {
 }
 
@@ -637,16 +681,16 @@ static inline bool_t gdb_parse_packet(const uint8_t *buff)
 		gdb_write_registers();
 		break;
 	case 'p':               /* read a single register */
-		gdb_read_register();
+		gdb_read_register(buff + 1);
 		break;
 	case 'P':               /* write single register */
-		gdb_write_register();
+		gdb_write_register(buff + 1);
 		break;
 	case 'm':               /* read memory */
-		gdb_read_memory();
+		gdb_read_memory(buff + 1);
 		break;
 	case 'M':               /* write memory */
-		gdb_write_memory();
+		gdb_write_memory(buff + 1);
 		break;
 	case 'D':               /* detach the debugger */
 	case 'k':               /* kill request */
