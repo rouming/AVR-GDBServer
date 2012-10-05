@@ -70,14 +70,14 @@ struct gdb_context
 			uint8_t ret_addr_h;
 			uint8_t ret_addr_l;
 		} *regs;
-		uint16_t pc;
-		enum gdb_interrupt_reason int_reason;
-		struct gdb_break breaks[MAX_BREAKS];
-		uint8_t breaks_cnt;
-		bool_t  in_stepi;
-		uint8_t buff[MAX_BUFF];
-		uint8_t buff_sz;
 	};
+	uint16_t pc;
+	enum gdb_interrupt_reason int_reason;
+	struct gdb_break breaks[MAX_BREAKS];
+	uint8_t breaks_cnt;
+	bool_t  in_stepi;
+	uint8_t buff[MAX_BUFF];
+	uint8_t buff_sz;
 };
 
 /* Inits gdb server context, implicitly starts UART */
