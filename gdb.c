@@ -411,7 +411,7 @@ static void gdb_send_buff(const uint8_t *buff, uint8_t off,
 						  uint8_t sz, bool_t in_hex, bool_t in_pgm)
 {
 	uint8_t sum = 0;
-	uint8_t b;
+	uint8_t b, nib;
 
 	gdb_send_byte('$');
 
@@ -422,13 +422,19 @@ static void gdb_send_buff(const uint8_t *buff, uint8_t off,
 		else
 			b = buff[i + off];
 
-		sum += b;
-
 		if (in_hex) {
-			gdb_send_byte(nib2hex((b >> 4) & 0xf));
-			gdb_send_byte(nib2hex(b & 0xf));
-		} else
+			/* first nib */
+			nib = nib2hex((b >> 4) & 0xf);
+			sum += nib;
+			gdb_send_byte(nib);
+			/* second nib */
+			nib = nib2hex(b & 0xf);
+			sum += nib;
+			gdb_send_byte(nib);
+		} else {
+			sum += b;
 			gdb_send_byte(b);
+		}
 	}
 
 	gdb_send_byte('#');
