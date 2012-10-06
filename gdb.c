@@ -324,6 +324,12 @@ ISR(INT0_vect, ISR_NAKED)
 {
 	/* Context save must be the first */
 	GDB_SAVE_CONTEXT();
+#if defined (__AVR_ATmega16__)
+	/* From datasheet: if software reads the Program Counter from
+	   the Stack after a call or an interrupt, unused bits (15:13)
+	   should be masked out. */
+	gdb_ctx->regs->pc_h &= 0x1f;
+#endif
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
 
@@ -347,6 +353,12 @@ ISR(INT0_vect, ISR_NAKED)
 ISR(USART_RXC_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
+#if defined (__AVR_ATmega16__)
+	/* From datasheet: if software reads the Program Counter from
+	   the Stack after a call or an interrupt, unused bits (15:13)
+	   should be masked out. */
+	gdb_ctx->regs->pc_h &= 0x1f;
+#endif
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
 	gdb_ctx->int_reason = gdb_user_interrupt;
