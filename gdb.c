@@ -326,12 +326,6 @@ ISR(INT0_vect, ISR_NAKED)
 	GDB_SAVE_CONTEXT();
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
-	/* We should continue execution from the PC where
-	   trap opcode was set, so decrement 1 word */
-	gdb_ctx->pc -= 1;
-	/* Replace return address with corrected PC */
-	gdb_ctx->regs->pc_h = (gdb_ctx->pc >> 8) & 0xff;
-	gdb_ctx->regs->pc_l = gdb_ctx->pc & 0xff;
 
 	/* Set correct interrupt reason */
 	if (gdb_ctx->in_stepi) {
