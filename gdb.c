@@ -496,7 +496,7 @@ static void gdb_read_registers()
 	gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->r0 >> 0) & 0xf);
 
 	/* send r1..r31 */
-	for (uint8_t *ptr = &gdb_ctx->regs->r1; i < 31*2; --ptr) {
+	for (uint8_t *ptr = &gdb_ctx->regs->r1; i < 32*2; --ptr) {
 		gdb_ctx->buff[i++] = nib2hex((*ptr >> 4) & 0xf);
 		gdb_ctx->buff[i++] = nib2hex((*ptr >> 0) & 0xf);
 	}
