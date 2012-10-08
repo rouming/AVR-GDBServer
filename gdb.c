@@ -34,6 +34,10 @@
 #define STR(s) #s
 #define STR_VAL(s) STR(s)
 
+#define MEM_SPACE_MASK 0x00ff0000
+#define FLASH_OFFSET   0x00000000
+#define SRAM_OFFSET    0x00800000
+
 /* Relative RJMP and RCALL 'k' address mask */
 #define REL_K_MASK     0x0fff
 #define REL_K_SHIFT    0
@@ -261,6 +265,16 @@ static uint16_t safe_pgm_read_word(uint32_t rom_addr_b)
 	else
 #endif
 		return pgm_read_word(rom_addr_b);
+}
+
+static uint8_t safe_pgm_read_byte(uint32_t rom_addr_b)
+{
+#ifdef pgm_read_byte_far
+	if (rom_addr_b >= (1l<<16))
+		return pgm_read_byte_far(rom_addr_b);
+	else
+#endif
+		return pgm_read_byte(rom_addr_b);
 }
 
 /* rom_addr - in words, sz - in bytes and must be multiple of two.
@@ -688,10 +702,70 @@ static void gdb_write_register(const uint8_t *buff)
 
 static void gdb_read_memory(const uint8_t *buff)
 {
+	uint32_t addr, sz;
+
+	buff += parse_hex(buff, &addr);
+	/* skip 'xxx,' */
+	parse_hex(buff + 1, &sz);
+
+	if ((addr & MEM_SPACE_MASK) == SRAM_OFFSET) {
+		addr &= ~MEM_SPACE_MASK;
+		uint8_t *ptr = (uint8_t*)(uintptr_t)addr;
+		for (uint8_t i = 0; i < sz; ++i) {
+			gdb_ctx->buff[i*2 + 0] = nib2hex(ptr[i] >> 4);
+			gdb_ctx->buff[i*2 + 1] = nib2hex(ptr[i] & 0xf);
+		}
+	}
+	else if ((addr & MEM_SPACE_MASK) == FLASH_OFFSET){
+		addr &= ~MEM_SPACE_MASK;
+		for (uint8_t i = 0; i < sz; ++i) {
+			uint8_t byte = safe_pgm_read_byte(addr + i);
+			gdb_ctx->buff[i*2 + 0] = nib2hex(byte >> 4);
+			gdb_ctx->buff[i*2 + 1] = nib2hex(byte & 0xf);
+		}
+	}
+	else {
+		/* posix EIO error */
+		gdb_send_reply("E05");
+		return;
+	}
+	gdb_ctx->buff_sz = sz * 2;
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
 }
 
 static void gdb_write_memory(const uint8_t *buff)
 {
+	uint32_t addr, sz;
+
+	buff += parse_hex(buff, &addr);
+	/* skip 'xxx,' */
+	buff += parse_hex(buff + 1, &sz);
+	/* skip , and : delimiters */
+	buff += 2;
+
+	if ((addr & MEM_SPACE_MASK) == SRAM_OFFSET) {
+		addr &= ~MEM_SPACE_MASK;
+		uint8_t *ptr = (uint8_t*)(uintptr_t)addr;
+		for (uint8_t i = 0; i < sz; ++i) {
+			ptr[i]  = hex2nib(*buff++) << 4;
+			ptr[i] |= hex2nib(*buff++);
+		}
+	}
+	else if ((addr & MEM_SPACE_MASK) == FLASH_OFFSET){
+		addr &= ~MEM_SPACE_MASK;
+		for (uint8_t i = 0; i < sz; ++i) {
+			uint8_t byte;
+			byte  = hex2nib(*buff++) << 4;
+			byte |= hex2nib(*buff++);
+			safe_pgm_write(&byte, addr + i, sizeof(byte));
+		}
+	}
+	else {
+		/* posix EIO error */
+		gdb_send_reply("E05");
+		return;
+	}
+	gdb_send_reply("OK");
 }
 
 static bool_t gdb_insert_breakpoint(uint16_t rom_addr)
