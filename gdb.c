@@ -460,19 +460,34 @@ static void gdb_send_state(uint8_t signo)
 {
 	uint32_t pc = (uint32_t)gdb_ctx->pc << 1;
 
-	gdb_ctx->buff_sz = snprintf_P((char*)gdb_ctx->buff, sizeof(gdb_ctx->buff),
-								  PSTR("T%02x20:%02x;21:%02x%02x;22:%02x%02x"
-									   "%02x%02x;thread:%d;"),
-								  signo,
-								  gdb_ctx->regs->sreg,
-								  gdb_ctx->sp & 0xff,
-								  (gdb_ctx->sp >> 8) & 0xff,
-								  pc & 0xff,
-								  (pc >> 8) & 0xff,
-								  (pc >> 16) & 0xff,
-								  (pc >> 24) & 0xff,
-								  /* thread id, always 1 */
-								  1);
+	/* thread is always 1 */
+	memcpy_P(gdb_ctx->buff,
+			 PSTR("TXX20:XX;21:XXXX;22:XXXXXXXX;thread:1;"),
+			 38);
+
+	/* signo */
+	gdb_ctx->buff[1] = nib2hex((signo >> 4)  & 0xf);
+	gdb_ctx->buff[2] = nib2hex(signo & 0xf);
+
+	/* sreg */
+	gdb_ctx->buff[6] = nib2hex((gdb_ctx->regs->sreg >> 4)  & 0xf);
+	gdb_ctx->buff[7] = nib2hex(gdb_ctx->regs->sreg & 0xf);
+
+	/* sp */
+	gdb_ctx->buff[12] = nib2hex((gdb_ctx->sp >> 4)  & 0xf);
+	gdb_ctx->buff[13] = nib2hex((gdb_ctx->sp >> 0)  & 0xf);
+	gdb_ctx->buff[14] = nib2hex((gdb_ctx->sp >> 12) & 0xf);
+	gdb_ctx->buff[15] = nib2hex((gdb_ctx->sp >> 8)  & 0xf);
+
+	/* pc */
+	gdb_ctx->buff[20] = nib2hex((pc >> 4)  & 0xf);
+	gdb_ctx->buff[21] = nib2hex((pc >> 0)  & 0xf);
+	gdb_ctx->buff[22] = nib2hex((pc >> 12) & 0xf);
+	gdb_ctx->buff[23] = nib2hex((pc >> 8)  & 0xf);
+	gdb_ctx->buff[24] = '0'; /* TODO: 22-bits not supported now */
+	gdb_ctx->buff[25] = nib2hex((pc >> 16) & 0xf);
+	gdb_ctx->buff[26] = '0'; /* gdb wants 32-bit value, send 0 */
+	gdb_ctx->buff[27] = '0'; /* gdb wants 32-bit value, send 0 */
 
 	/* not in hex, send from ram */
 	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz,
