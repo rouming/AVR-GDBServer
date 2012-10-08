@@ -580,7 +580,7 @@ static void gdb_write_registers(const uint8_t *buff)
 	pc |= (uint32_t)hex2nib(*buff++) << 24;
 	gdb_ctx->pc = pc >> 1;
 
-	gdb_send_reply( "OK" );
+	gdb_send_reply("OK");
 }
 
 static void gdb_read_register(const uint8_t *buff)
