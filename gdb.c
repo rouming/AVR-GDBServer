@@ -585,10 +585,105 @@ static void gdb_write_registers(const uint8_t *buff)
 
 static void gdb_read_register(const uint8_t *buff)
 {
+	uint32_t reg;
+	uint8_t i = 0;
+
+	parse_hex(buff, &reg);
+	/* r0 */
+	if (reg == 0) {
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->r0 >> 4) & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->r0 >> 0) & 0xf);
+	}
+	/* r1..r31 */
+	if (reg > 0 && reg < 32) {
+		uint8_t *ptr = &gdb_ctx->regs->r1 - (reg - 1);
+		gdb_ctx->buff[i++] = nib2hex((*ptr >> 4) & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((*ptr >> 0) & 0xf);
+	}
+	/* sreg */
+	else if (reg == 32) {
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->sreg >> 4) & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->regs->sreg >> 0) & 0xf);
+	}
+	/* sp */
+	else if (reg == 33) {
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 4)  & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 0)  & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 12) & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((gdb_ctx->sp >> 8)  & 0xf);
+	}
+	/* pc */
+	else if (reg == 34) {
+		uint32_t pc = (uint32_t)gdb_ctx->pc << 1;
+		gdb_ctx->buff[i++] = nib2hex((pc >> 4)  & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((pc >> 0)  & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((pc >> 12) & 0xf);
+		gdb_ctx->buff[i++] = nib2hex((pc >> 8)  & 0xf);
+		gdb_ctx->buff[i++] = '0'; /* TODO: 22-bits not supported now */
+		gdb_ctx->buff[i++] = nib2hex((pc >> 16) & 0xf);
+		gdb_ctx->buff[i++] = '0'; /* gdb wants 32-bit value, send 0 */
+		gdb_ctx->buff[i++] = '0'; /* gdb wants 32-bit value, send 0 */
+	}
+	/* error */
+	else {
+		gdb_send_reply("E00");
+		return;
+	}
+
+	gdb_ctx->buff_sz = i;
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
 }
 
 static void gdb_write_register(const uint8_t *buff)
 {
+	uint32_t reg;
+	uint8_t len;
+
+	len = parse_hex(buff, &reg);
+	buff += len + 1;
+	/* r0 */
+	if (reg == 0) {
+		gdb_ctx->regs->r0  = hex2nib(*buff++) << 4;
+		gdb_ctx->regs->r0 |= hex2nib(*buff++);
+	}
+	/* r1..r31 */
+	if (reg > 0 && reg < 32) {
+		uint8_t *ptr = &gdb_ctx->regs->r1 - (reg - 1);
+		*ptr  = hex2nib(*buff++) << 4;
+		*ptr |= hex2nib(*buff++);
+	}
+	/* sreg */
+	else if (reg == 32) {
+		gdb_ctx->regs->sreg  = hex2nib(*buff++) << 4;
+		gdb_ctx->regs->sreg |= hex2nib(*buff++);
+	}
+	/* sp */
+	else if (reg == 33) {
+		gdb_ctx->sp  = hex2nib(*buff++) << 4;
+		gdb_ctx->sp |= hex2nib(*buff++);
+		gdb_ctx->sp |= hex2nib(*buff++) << 12;
+		gdb_ctx->sp |= hex2nib(*buff++) << 8;
+	}
+	/* pc */
+	else if (reg == 34) {
+		uint32_t pc;
+		pc  = hex2nib(*buff++) << 4;
+		pc |= hex2nib(*buff++);
+		pc |= hex2nib(*buff++) << 12;
+		pc |= hex2nib(*buff++) << 8;
+		pc |= (uint32_t)hex2nib(*buff++) << 20;
+		pc |= (uint32_t)hex2nib(*buff++) << 16;
+		pc |= (uint32_t)hex2nib(*buff++) << 28;
+		pc |= (uint32_t)hex2nib(*buff++) << 24;
+		gdb_ctx->pc = pc >> 1;
+	}
+	/* error */
+	else {
+		gdb_send_reply("E00");
+		return;
+	}
+
+	gdb_send_reply("OK");
 }
 
 static void gdb_read_memory(const uint8_t *buff)
