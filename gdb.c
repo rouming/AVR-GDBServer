@@ -527,8 +527,45 @@ static void gdb_read_registers()
 	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
 }
 
-static void gdb_write_registers()
+static void gdb_write_registers(const uint8_t *buff)
 {
+	uint32_t pc;
+
+	/* receive r0 */
+	gdb_ctx->regs->r0  = hex2nib(*buff++) << 4;
+	gdb_ctx->regs->r0 |= hex2nib(*buff++);
+
+	/* receive r1..r31 */
+	for (uint8_t *ptr = &gdb_ctx->regs->r1;
+		 ptr != &gdb_ctx->regs->stack_bottom; --ptr) {
+		*ptr  = hex2nib(*buff++) << 4;
+		*ptr |= hex2nib(*buff++);
+	}
+
+	/* receive SREG as 32 register */
+	gdb_ctx->regs->sreg  = hex2nib(*buff++) << 4;
+	gdb_ctx->regs->sreg |= hex2nib(*buff++);
+
+	/* receive SP as 33 register */
+	gdb_ctx->sp  = hex2nib(*buff++) << 4;
+	gdb_ctx->sp |= hex2nib(*buff++);
+	gdb_ctx->sp |= hex2nib(*buff++) << 12;
+	gdb_ctx->sp |= hex2nib(*buff++) << 8;
+
+	/* receive PC as 34 register
+	   gdb stores PC in a 32 bit value.
+	   gdb thinks PC is bytes into flash, not in words. */
+	pc  = hex2nib(*buff++) << 4;
+	pc |= hex2nib(*buff++);
+	pc |= hex2nib(*buff++) << 12;
+	pc |= hex2nib(*buff++) << 8;
+	pc |= (uint32_t)hex2nib(*buff++) << 20;
+	pc |= (uint32_t)hex2nib(*buff++) << 16;
+	pc |= (uint32_t)hex2nib(*buff++) << 28;
+	pc |= (uint32_t)hex2nib(*buff++) << 24;
+	gdb_ctx->pc = pc >> 1;
+
+	gdb_send_reply( "OK" );
 }
 
 static void gdb_read_register(const uint8_t *buff)
@@ -684,7 +721,7 @@ static inline bool_t gdb_parse_packet(const uint8_t *buff)
 		gdb_read_registers();
 		break;
 	case 'G':               /* write registers */
-		gdb_write_registers();
+		gdb_write_registers(buff + 1);
 		break;
 	case 'p':               /* read a single register */
 		gdb_read_register(buff + 1);
