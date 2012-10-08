@@ -225,7 +225,7 @@ static uint8_t gdb_pkt_sz_desc_len;
 static struct gdb_context *gdb_ctx;
 
 static void gdb_trap();
-static inline struct gdb_break *gdb_find_break(uint16_t rom_addr);
+static struct gdb_break *gdb_find_break(uint16_t rom_addr);
 static void gdb_remove_breakpoint_ptr(struct gdb_break *breakp);
 static void gdb_send_state(uint8_t signo);
 
@@ -233,7 +233,7 @@ static void gdb_send_state(uint8_t signo);
 #define nib2hex(i) (uint8_t)((i) > 9 ? 'a' - 10 + (i) : '0' + (i))
 
 /* Convert a hexidecimal digit to a 4 bit nibble. */
-static inline uint8_t hex2nib(uint8_t hex)
+static uint8_t hex2nib(uint8_t hex)
 {
 	if (hex >= 'A' && hex <= 'F')
 		return 10 + (hex - 'A');
@@ -245,7 +245,7 @@ static inline uint8_t hex2nib(uint8_t hex)
 	return 0;
 }
 
-static inline uint8_t parse_hex(const uint8_t *buff, uint32_t *hex)
+static uint8_t parse_hex(const uint8_t *buff, uint32_t *hex)
 {
 	uint8_t nib, len;
 	for (*hex = 0, len = 0; (nib = hex2nib(buff[len])); ++len)
@@ -253,7 +253,7 @@ static inline uint8_t parse_hex(const uint8_t *buff, uint32_t *hex)
 	return len;
 }
 
-static inline uint16_t safe_pgm_read_word(uint32_t rom_addr_b)
+static uint16_t safe_pgm_read_word(uint32_t rom_addr_b)
 {
 #ifdef pgm_read_word_far
 	if (rom_addr_b >= (1l<<16))
@@ -658,7 +658,7 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 		gdb_insert_breakpoint(pc + 1);
 }
 
-static inline struct gdb_break *gdb_find_break(uint16_t rom_addr)
+static struct gdb_break *gdb_find_break(uint16_t rom_addr)
 {
 	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
 		if (gdb_ctx->breaks[i].addr == rom_addr)
@@ -705,7 +705,7 @@ static void gdb_do_stepi()
 	gdb_ctx->in_stepi = TRUE;
 }
 
-static inline bool_t gdb_parse_packet(const uint8_t *buff)
+static bool_t gdb_parse_packet(const uint8_t *buff)
 {
 	switch (*buff) {
 	case '?':               /* last signal */
