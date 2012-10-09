@@ -16,13 +16,6 @@ typedef uint8_t bool_t;
 #define FALSE 0
 #define TRUE 1
 
-enum gdb_interrupt_reason
-{
-	gdb_user_interrupt   = 0,
-	gdb_orig_breakpoint  = 1,
-	gdb_stepi_breakpoint = 2
-};
-
 struct gdb_break
 {
 	uint16_t addr; /* in words */
@@ -73,7 +66,6 @@ struct gdb_context
 		} *regs;
 	};
 	uint16_t pc;
-	enum gdb_interrupt_reason int_reason;
 	struct gdb_break breaks[MAX_BREAKS];
 	uint8_t breaks_cnt;
 	bool_t  in_stepi;

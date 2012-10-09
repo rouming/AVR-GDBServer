@@ -411,11 +411,8 @@ trap:
 		/* Remove all previous stepi breaks */
 		while (gdb_ctx->breaks_cnt)
 			gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[gdb_ctx->breaks_cnt-1]);
-		gdb_ctx->int_reason = gdb_stepi_breakpoint;
 		gdb_ctx->in_stepi = FALSE;
 	}
-	else
-		gdb_ctx->int_reason = gdb_orig_breakpoint;
 
 	gdb_send_state(GDB_SIGTRAP);
 	gdb_trap();
@@ -438,7 +435,6 @@ ISR(USART_RXC_vect, ISR_NAKED)
 #endif
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
-	gdb_ctx->int_reason = gdb_user_interrupt;
 	gdb_trap();
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("reti \n\t");
