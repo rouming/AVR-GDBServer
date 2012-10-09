@@ -334,19 +334,78 @@ static void safe_pgm_write(const void *ram_addr,
 
 /******************************************************************************/
 
-ISR(INT0_vect, ISR_NAKED)
+void init_timer1()
 {
+#define TIMER1_RATE 1000
+
+#if defined(__AVR_ATmega16__)
+	/* Set CTC mode */
+	TCCR1B |= (1 << WGM12);
+	/* No prescaler */
+	TCCR1B |= (1 << CS10);
+	/* Set the compare register */
+	OCR1A = F_CPU / TIMER1_RATE - 1;
+	/* Enable Output Compare Match Interrupt */
+	TIMSK |= (1 << OCIE1A);
+#else
+#error Unsupported AVR device
+#endif
+}
+
+void init_uart()
+{
+#define BAUD_RATE 9600
+
+#if defined(__AVR_ATmega16__)
+	uint16_t ubrr = F_CPU / 16 / BAUD_RATE - 1;
+
+	/* Disable uart rx/tx first */
+	UCSRB = 0;
+
+	/* Set baud rate */
+	UBRRH = (unsigned char)(ubrr>>8);
+	UBRRL = (unsigned char)ubrr;
+	/* Set frame format: 8data, 1stop bit */
+	UCSRC = (1<<URSEL)|(3<<UCSZ0);
+	/* Enable receiver, transmitter and RX interrupt */
+	UCSRB = (1<<RXEN)|(1<<TXEN)|(1<<RXCIE);
+#else
+#error Unsupported AVR device
+#endif
+}
+
+ISR(TIMER1_COMPA_vect, ISR_NAKED)
+{
+	static uint16_t s_overflows = 0;
+
 	/* Context save must be the first */
 	GDB_SAVE_CONTEXT();
+
+	/* We do all heavy checks every second */
+	if (++s_overflows != TIMER1_RATE)
+		goto out;
+	s_overflows = 0;
+
 #if defined (__AVR_ATmega16__)
 	/* From datasheet: if software reads the Program Counter from
 	   the Stack after a call or an interrupt, unused bits (15:13)
 	   should be masked out. */
 	gdb_ctx->regs->pc_h &= 0x1f;
+#else
+#error Unsupported AVR device
 #endif
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
 
+	/* Check breakpoint */
+	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
+		if (gdb_ctx->pc == gdb_ctx->breaks[i].addr)
+			goto trap;
+
+	/* Nothing */
+	goto out;
+
+trap:
 	/* Set correct interrupt reason */
 	if (gdb_ctx->in_stepi) {
 		/* Remove all previous stepi breaks */
@@ -360,6 +419,8 @@ ISR(INT0_vect, ISR_NAKED)
 
 	gdb_send_state(GDB_SIGTRAP);
 	gdb_trap();
+
+out:
 	GDB_RESTORE_CONTEXT();
 	asm volatile ("reti \n\t");
 }
@@ -372,6 +433,8 @@ ISR(USART_RXC_vect, ISR_NAKED)
 	   the Stack after a call or an interrupt, unused bits (15:13)
 	   should be masked out. */
 	gdb_ctx->regs->pc_h &= 0x1f;
+#else
+#error Unsupported AVR device
 #endif
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
@@ -410,21 +473,26 @@ void gdb_init(struct gdb_context *ctx)
 	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
 		gdb_ctx->breaks[i].opcode = TRAP_OPCODE;
 
-	/* init, start int0 software interrupt */
-	/* init, start uart */
+	init_timer1();
+	init_uart();
 }
 
 static void gdb_send_byte(uint8_t b)
 {
-	/* need to implement */
+#if defined (__AVR_ATmega16__)
 	UDR = b;
+#else
+#error Unsupported AVR device
+#endif
 }
-
 
 static uint8_t gdb_read_byte()
 {
-	/* todo */
+#if defined (__AVR_ATmega16__)
 	return UDR;
+#else
+#error Unsupported AVR device
+#endif
 }
 
 static void gdb_send_buff(const uint8_t *buff, uint8_t off,
