@@ -228,7 +228,7 @@ static uint8_t gdb_pkt_sz_desc_len;
 
 static struct gdb_context *gdb_ctx;
 
-static void gdb_trap();
+static void gdb_trap(void);
 static struct gdb_break *gdb_find_break(uint16_t rom_addr);
 static void gdb_remove_breakpoint_ptr(struct gdb_break *breakp);
 static void gdb_send_state(uint8_t signo);
@@ -334,7 +334,7 @@ static void safe_pgm_write(const void *ram_addr,
 
 /******************************************************************************/
 
-void init_timer1()
+void init_timer1(void)
 {
 #define TIMER1_RATE 1000
 
@@ -352,7 +352,7 @@ void init_timer1()
 #endif
 }
 
-void init_uart()
+void init_uart(void)
 {
 #define BAUD_RATE 9600
 
@@ -482,7 +482,7 @@ static void gdb_send_byte(uint8_t b)
 #endif
 }
 
-static uint8_t gdb_read_byte()
+static uint8_t gdb_read_byte(void)
 {
 #if defined (__AVR_ATmega16__)
 	return UDR;
@@ -579,7 +579,7 @@ static void gdb_send_state(uint8_t signo)
    low bytes before high since AVR is little endian.
    This routine requires (32 gpwr, SREG, SP, PC) * 2 hex bytes
    space of buffer, i.e. min (32 + 1 + 2 + 4) * 2 = 78 */
-static void gdb_read_registers()
+static void gdb_read_registers(void)
 {
 	uint32_t pc = (uint32_t)gdb_ctx->pc << 1;
 	uint8_t i = 0;
@@ -942,7 +942,7 @@ static void gdb_insert_remove_breakpoint(const uint8_t *buff)
 	}
 }
 
-static void gdb_do_stepi()
+static void gdb_do_stepi(void)
 {
 	/* gdb guarantees that there will be no any breakpoints
 	   already set on this stepi call, so do not bother about
@@ -1040,7 +1040,7 @@ static bool_t gdb_parse_packet(const uint8_t *buff)
 	return TRUE;
 }
 
-static void gdb_trap()
+static void gdb_trap(void)
 {
 	uint8_t checksum, pkt_checksum;
 	uint8_t b;
