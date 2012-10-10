@@ -973,8 +973,8 @@ static bool_t gdb_parse_packet(const uint8_t *buff)
 	case '?':               /* last signal */
 		gdb_send_reply("S05"); /* signal # 5 is SIGTRAP */
 		break;
-	case 'H':               /* Set thread, not supported */
-		gdb_send_reply("E00");
+	case 'H':               /* Set thread, always OK */
+		gdb_send_reply("OK");
 		break;
 	case 'T':               /* Is thread alive, always OK */
 		gdb_send_reply("OK");
