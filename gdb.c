@@ -302,6 +302,9 @@ static void safe_pgm_write(const void *ram_addr,
 		 page < end_page;
 		 page += SPM_PAGESIZE_W, off = 0) {
 
+		/* page to bytes */
+		uint32_t page_b = (uint32_t)page << 1;
+
 		/* Fill temporary page */
 		for (uint16_t page_off = 0;
 			 page_off < SPM_PAGESIZE_W;
@@ -323,13 +326,16 @@ static void safe_pgm_write(const void *ram_addr,
 		}
 
 		/* Erase page and wait until done. */
-		boot_page_erase(page);
+		boot_page_erase(page_b);
 		boot_spm_busy_wait();
 
 		/* Write page and wait until done. */
-		boot_page_write(page);
+		boot_page_write(page_b);
 		boot_spm_busy_wait();
 	}
+
+	/* Reenable RWW-section again to jump to it */
+	boot_rww_enable ();
 }
 
 /******************************************************************************/
