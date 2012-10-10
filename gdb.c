@@ -476,6 +476,9 @@ void gdb_init(struct gdb_context *ctx)
 static void gdb_send_byte(uint8_t b)
 {
 #if defined (__AVR_ATmega16__)
+	/* Wait for empty transmit buffer */
+	while (!(UCSRA & (1<<UDRE)))
+		;
 	UDR = b;
 #else
 #error Unsupported AVR device
@@ -485,6 +488,10 @@ static void gdb_send_byte(uint8_t b)
 static uint8_t gdb_read_byte(void)
 {
 #if defined (__AVR_ATmega16__)
+	/* Wait for data to be received */
+	while (!(UCSRA & (1<<RXC)))
+		/* TODO: watchdog reset */
+		;
 	return UDR;
 #else
 #error Unsupported AVR device
