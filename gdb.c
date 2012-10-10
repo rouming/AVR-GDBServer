@@ -38,6 +38,14 @@
 #define FLASH_OFFSET   0x00000000
 #define SRAM_OFFSET    0x00800000
 
+/* AVR puts garbage in hight bits on return address on stack.
+   Mask them out */
+#if defined(__AVR_ATmega16__)
+#define RET_ADDR_MASK  0x1f
+#else
+#error Unsupported platform
+#endif
+
 /* Relative RJMP and RCALL 'k' address mask */
 #define REL_K_MASK     0x0fff
 #define REL_K_SHIFT    0
@@ -392,15 +400,7 @@ ISR(TIMER1_COMPA_vect, ISR_NAKED)
 		goto out;
 	s_overflows = 0;
 
-#if defined (__AVR_ATmega16__)
-	/* From datasheet: if software reads the Program Counter from
-	   the Stack after a call or an interrupt, unused bits (15:13)
-	   should be masked out. */
-	gdb_ctx->regs->pc_h &= 0x1f;
-#else
-#error Unsupported AVR device
-#endif
-	/* Advance to application stack on 32 registers, SREG and 16-bit PC */
+	gdb_ctx->regs->pc_h &= RET_ADDR_MASK;
 	/* Advance to application stack on 32 registers, SREG and 16-bit PC.
 	   TODO: 24-bit PC unsupported */
 	gdb_ctx->sp = (uintptr_t)gdb_ctx->regs + 35;
@@ -435,14 +435,7 @@ out:
 ISR(USART_RXC_vect, ISR_NAKED)
 {
 	GDB_SAVE_CONTEXT();
-#if defined (__AVR_ATmega16__)
-	/* From datasheet: if software reads the Program Counter from
-	   the Stack after a call or an interrupt, unused bits (15:13)
-	   should be masked out. */
-	gdb_ctx->regs->pc_h &= 0x1f;
-#else
-#error Unsupported AVR device
-#endif
+	gdb_ctx->regs->pc_h &= RET_ADDR_MASK;
 	/* Advance to application stack on 32 registers, SREG and 16-bit PC.
 	   TODO: 24-bit PC unsupported */
 	gdb_ctx->sp = (uintptr_t)gdb_ctx->regs + 35;
