@@ -504,31 +504,29 @@ static uint8_t gdb_read_byte(void)
 #endif
 }
 
-static void gdb_send_buff(const uint8_t *buff, uint8_t off,
-						  uint8_t sz, bool_t in_hex, bool_t in_pgm)
+struct buff_vec
+{
+	const uint8_t *buff;
+	uint8_t off;
+	uint8_t sz;
+	bool_t in_pgm;
+};
+
+static void gdb_send_buff_vec(const struct buff_vec *vec, uint8_t cnt)
 {
 	uint8_t sum = 0;
-	uint8_t b, nib;
+	uint8_t b;
 
 	gdb_send_byte('$');
 
-	for (uint8_t i = 0; i < sz; ++i) {
-		if (in_pgm)
-			/* NOTE: rom buffer must be located in < 64K address section */
-			b = pgm_read_byte(&buff[i + off]);
-		else
-			b = buff[i + off];
+	for (uint8_t ind = 0; ind < cnt; ++ind) {
+		for (uint8_t i = 0; i < vec[ind].sz; ++i) {
+			if (vec[ind].in_pgm)
+				/* NOTE: rom buffer must be located in < 64K address section */
+				b = pgm_read_byte(&vec[ind].buff[i + vec[ind].off]);
+			else
+				b = vec[ind].buff[i + vec[ind].off];
 
-		if (in_hex) {
-			/* first nib */
-			nib = nib2hex((b >> 4) & 0xf);
-			sum += nib;
-			gdb_send_byte(nib);
-			/* second nib */
-			nib = nib2hex(b & 0xf);
-			sum += nib;
-			gdb_send_byte(nib);
-		} else {
 			sum += b;
 			gdb_send_byte(b);
 		}
@@ -539,12 +537,22 @@ static void gdb_send_buff(const uint8_t *buff, uint8_t off,
 	gdb_send_byte(nib2hex(sum & 0xf));
 }
 
+static void gdb_send_buff(const uint8_t *buff, uint8_t off,
+						  uint8_t sz, bool_t in_pgm)
+{
+	struct buff_vec vec[] = { {.buff = buff,
+							   .off = off,
+							   .sz = sz,
+							   .in_pgm = in_pgm} };
+	gdb_send_buff_vec(vec, 1);
+}
+
 static void gdb_send_reply(const char *reply)
 {
 	uint8_t len = strlen(reply);
 	gdb_ctx->buff_sz = MIN(len, sizeof(gdb_ctx->buff));
 	memcpy(gdb_ctx->buff, reply, gdb_ctx->buff_sz);
-	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE);
 }
 
 static void gdb_send_state(uint8_t signo)
@@ -582,8 +590,7 @@ static void gdb_send_state(uint8_t signo)
 	gdb_ctx->buff[27] = '0'; /* gdb wants 32-bit value, send 0 */
 
 	/* not in hex, send from ram */
-	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz,
-				  FALSE, FALSE);
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE);
 }
 
 /* GDB needs the 32 8-bit, gpw registers (r00 - r31), the
@@ -631,7 +638,7 @@ static void gdb_read_registers(void)
 	gdb_ctx->buff[i++] = '0'; /* gdb wants 32-bit value, send 0 */
 
 	gdb_ctx->buff_sz = i;
-	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE);
 }
 
 static void gdb_write_registers(const uint8_t *buff)
@@ -723,7 +730,7 @@ static void gdb_read_register(const uint8_t *buff)
 	}
 
 	gdb_ctx->buff_sz = i;
-	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE);
 }
 
 static void gdb_write_register(const uint8_t *buff)
@@ -808,7 +815,7 @@ static void gdb_read_memory(const uint8_t *buff)
 		return;
 	}
 	gdb_ctx->buff_sz = sz * 2;
-	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE, FALSE);
+	gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE);
 }
 
 static void gdb_write_memory(const uint8_t *buff)
@@ -1022,22 +1029,30 @@ static bool_t gdb_parse_packet(const uint8_t *buff)
 	case 'q':               /* query requests */
 		if(memcmp_PF(buff, (uintptr_t)PSTR("qSupported"), 10) == 0) {
 			/* plain send, from ram */
-			gdb_send_buff(gdb_pkt_sz_desc, 0, gdb_pkt_sz_desc_len,
-						  FALSE, TRUE);
+			gdb_send_buff(gdb_pkt_sz_desc, 0, gdb_pkt_sz_desc_len, TRUE);
 		} else if(memcmp_PF(buff, (uintptr_t)PSTR("qXfer:features:read:target.xml:"), 31) == 0) {
 			/* GDB XML target descriptions, since GDB 6.7 (2007-10-10)
 			   see http://sources.redhat.com/gdb/current/onlinedocs/gdb/Target-Descriptions.html */
-			uint8_t off = 0, sz = 0;
+			uint32_t len, off, sz;
+			uint8_t b;
+			struct buff_vec vec[] = { {.buff = &b, .off = 0,
+									   .sz = 1, .in_pgm = FALSE},
+									  {.buff = gdb_target_desc, .off = 0,
+									   .sz = 0, .in_pgm = TRUE} };
+			len = parse_hex(buff + 31, &off);
+			parse_hex(buff + 31 + len + 1, &sz);
 			if (off + sz > gdb_target_desc_len) {
 				sz = gdb_target_desc_len - off;
 				/* send is fully completed */
-				gdb_send_byte('l');
+				b = 'l';
 			} else
 				/* will continue send with some offset */
-				gdb_send_byte('m');
-			/* plain send, from ram */
-			gdb_send_buff(gdb_target_desc, off, sz,
-						  FALSE, TRUE);
+				b = 'm';
+			/* set actual off and sz */
+			vec[1].off = off;
+			vec[1].sz = sz;
+			/* send vec */
+			gdb_send_buff_vec(vec, ARRAY_SIZE(vec));
 		} else if(memcmp_PF(gdb_ctx->buff, (uintptr_t)PSTR("qC"), 2) == 0)
 			/* current thread is always 1 */
 			gdb_send_reply("QC01");
@@ -1098,8 +1113,7 @@ static void gdb_trap(void)
 			return;
 
 		case '-':  /* NACK, repeat previous reply */
-			gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz,
-						  FALSE, FALSE);
+			gdb_send_buff(gdb_ctx->buff, 0, gdb_ctx->buff_sz, FALSE);
 			break;
 		case '+':  /* ACK, great */
 			break;
