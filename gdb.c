@@ -400,6 +400,10 @@ ISR(TIMER1_COMPA_vect, ISR_NAKED)
 #else
 #error Unsupported AVR device
 #endif
+	/* Advance to application stack on 32 registers, SREG and 16-bit PC */
+	/* Advance to application stack on 32 registers, SREG and 16-bit PC.
+	   TODO: 24-bit PC unsupported */
+	gdb_ctx->sp = (uintptr_t)gdb_ctx->regs + 35;
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
 
@@ -439,6 +443,9 @@ ISR(USART_RXC_vect, ISR_NAKED)
 #else
 #error Unsupported AVR device
 #endif
+	/* Advance to application stack on 32 registers, SREG and 16-bit PC.
+	   TODO: 24-bit PC unsupported */
+	gdb_ctx->sp = (uintptr_t)gdb_ctx->regs + 35;
 	gdb_ctx->pc = (gdb_ctx->regs->pc_h << 8) |
 				  (gdb_ctx->regs->pc_l);
 	gdb_trap();
