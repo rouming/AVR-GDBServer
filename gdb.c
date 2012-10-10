@@ -246,13 +246,13 @@ static uint8_t hex2nib(uint8_t hex)
 	else if (hex >= '0' && hex <= '9')
 		return hex - '0';
 
-	return 0;
+	return 0xff;
 }
 
 static uint8_t parse_hex(const uint8_t *buff, uint32_t *hex)
 {
 	uint8_t nib, len;
-	for (*hex = 0, len = 0; (nib = hex2nib(buff[len])); ++len)
+	for (*hex = 0, len = 0; (nib = hex2nib(buff[len])) != 0xff; ++len)
 		*hex = (*hex << 4) + nib;
 	return len;
 }
