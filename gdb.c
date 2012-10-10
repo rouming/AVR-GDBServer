@@ -831,11 +831,16 @@ static void gdb_write_memory(const uint8_t *buff)
 	}
 	else if ((addr & MEM_SPACE_MASK) == FLASH_OFFSET){
 		addr &= ~MEM_SPACE_MASK;
-		for (uint8_t i = 0; i < sz; ++i) {
-			uint8_t byte;
-			byte  = hex2nib(*buff++) << 4;
-			byte |= hex2nib(*buff++);
-			safe_pgm_write(&byte, addr + i, sizeof(byte));
+		/* to words */
+		addr >>= 1;
+		/* we assume sz is always multiple of two, i.e. write words */
+		for (uint8_t i = 0; i < sz/2; ++i) {
+			uint16_t word;
+			word  = hex2nib(*buff++) << 4;
+			word |= hex2nib(*buff++);
+			word |= hex2nib(*buff++) << 12;
+			word |= hex2nib(*buff++) << 8;
+			safe_pgm_write(&word, addr + i, sizeof(word));
 		}
 	}
 	else {
