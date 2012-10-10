@@ -555,6 +555,7 @@ static void gdb_send_state(uint8_t signo)
 	memcpy_P(gdb_ctx->buff,
 			 PSTR("TXX20:XX;21:XXXX;22:XXXXXXXX;thread:1;"),
 			 38);
+	gdb_ctx->buff_sz = 38;
 
 	/* signo */
 	gdb_ctx->buff[1] = nib2hex((signo >> 4)  & 0xf);
@@ -1064,11 +1065,13 @@ static void gdb_trap(void)
 		switch(b) {
 		case '$':
 			/* Read everything to buffer */
+			gdb_ctx->buff_sz = 0;
 			for (pkt_checksum = 0, b = gdb_read_byte();
 				 b != '#'; b = gdb_read_byte()) {
 				gdb_ctx->buff[gdb_ctx->buff_sz++] = b;
 				pkt_checksum += b;
 			}
+			gdb_ctx->buff[gdb_ctx->buff_sz] = 0;
 
 			checksum  = hex2nib(gdb_read_byte()) << 4;
 			checksum |= hex2nib(gdb_read_byte());

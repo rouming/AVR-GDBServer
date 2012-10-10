@@ -69,7 +69,7 @@ struct gdb_context
 	struct gdb_break breaks[MAX_BREAKS];
 	uint8_t breaks_cnt;
 	bool_t  in_stepi;
-	uint8_t buff[MAX_BUFF];
+	uint8_t buff[MAX_BUFF+1];
 	uint8_t buff_sz;
 };
 
