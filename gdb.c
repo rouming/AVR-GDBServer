@@ -408,7 +408,7 @@ ISR(TIMER1_COMPA_vect, ISR_NAKED)
 				  (gdb_ctx->regs->pc_l);
 
 	/* Check breakpoint */
-	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
+	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
 		if (gdb_ctx->pc == gdb_ctx->breaks[i].addr)
 			goto trap;
 
@@ -419,8 +419,10 @@ trap:
 	/* Set correct interrupt reason */
 	if (gdb_ctx->in_stepi) {
 		/* Remove all previous stepi breaks */
-		while (gdb_ctx->breaks_cnt)
-			gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[gdb_ctx->breaks_cnt-1]);
+		for (uint8_t i = 0;
+			 i < ARRAY_SIZE(gdb_ctx->breaks) && gdb_ctx->breaks_cnt; ++i)
+			if (gdb_ctx->breaks[i].addr)
+				gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[i]);
 		gdb_ctx->in_stepi = FALSE;
 	}
 
@@ -471,9 +473,8 @@ void gdb_init(struct gdb_context *ctx)
 	gdb_ctx->buff_sz = 0;
 	gdb_ctx->in_stepi = FALSE;
 
-	/* Create 16-bit trap opcode for software interrupt */
-	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
-		gdb_ctx->breaks[i].opcode = TRAP_OPCODE;
+	/* Init breaks */
+	memset(gdb_ctx->breaks, 0, sizeof(gdb_ctx->breaks));
 
 	init_timer1();
 	init_uart();
@@ -870,14 +871,21 @@ static void gdb_write_memory(const uint8_t *buff)
 
 static bool_t gdb_insert_breakpoint(uint16_t rom_addr)
 {
-	uint16_t trap_opcode;
-	struct gdb_break *breakp;
+	uint16_t trap_opcode = TRAP_OPCODE;
+	struct gdb_break *breakp = NULL;
 
 	if (gdb_ctx->breaks_cnt == MAX_BREAKS)
 		return FALSE;
+	gdb_ctx->breaks_cnt++;
 
-	trap_opcode = TRAP_OPCODE;
-	breakp = &gdb_ctx->breaks[gdb_ctx->breaks_cnt++];
+	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i) {
+		if (!gdb_ctx->breaks[i].addr) {
+			breakp = &gdb_ctx->breaks[i];
+			break;
+		}
+	}
+	/* we are sure breakp is not NULL */
+
 	breakp->addr = rom_addr;
 	breakp->opcode = safe_pgm_read_word((uint32_t)rom_addr << 1);
 	safe_pgm_write(&trap_opcode, breakp->addr, sizeof(trap_opcode));
@@ -944,7 +952,7 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 
 static struct gdb_break *gdb_find_break(uint16_t rom_addr)
 {
-	for (uint8_t i = 0; i < gdb_ctx->breaks_cnt; ++i)
+	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
 		if (gdb_ctx->breaks[i].addr == rom_addr)
 			return &gdb_ctx->breaks[i];
 	return NULL;
