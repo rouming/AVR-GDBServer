@@ -54,27 +54,32 @@
    1001 0101 000N 1000
    PC(15:0) ← STACK */
 #define RETn_OPCODE    0x9508
+#define RETn_MASK      0xffef
 
 /* CPSE
    0001 00rd dddd rrrr
    PC <- PC + 1, or PC + 2 or 3 */
 #define CPSE_OPCODE    0x1000
+#define CPSE_MASK      0xfc00
 
 /* SBRC, SBRS
    1111 11Nr rrrr 0bbb
    PC <- PC + 1, or PC + 2 or 3 */
 #define SBRn_OPCODE    0xfc00
+#define SBRn_MASK      0xfc08
 
 /* SBIC, SBIS
    1001 10N1 AAAA Abbb
    PC <- PC + 1, or PC + 2 or 3 */
 #define SBIn_OPCODE    0x9900
+#define SBIn_MASK      0xfd00
 
 /* BREQ, BRNE, BRCS, BRCC, BRSH, BRLO, BRMI, BRPL, BRGE,
    BRLT, BRHS, BRHC, BRTS, BRTC, BRVS, BRVC, BRIE, BRID
    1111 0Nkk kkkk kNNN
    PC <- PC + 1, or PC + k + 1 */
 #define BRCH_OPCODE    0xf000
+#define BRCH_MASK      0xf800
 
 /* 'k' address mask for all branch opcodes */
 #define BRCH_K_MASK    0x03f8
@@ -88,6 +93,7 @@
 /* RCALL
    1101 kkkk kkkk kkkk */
 #define RCALL_OPCODE   0xd000
+#define RCALL_MASK     0xf000
 
 /* EICALL
    1001 0101 0001 1010
@@ -99,6 +105,7 @@
    1001 010k kkkk 111k
    kkkk kkkk kkkk kkkk */
 #define CALL_OPCODE    0x940e
+#define CALL_MASK      0xfe0e
 
 /* IJMP
    1001 0100 0000 1001
@@ -108,6 +115,7 @@
 /* RJMP
    1100 kkkk kkkk kkkk */
 #define RJMP_OPCODE    0xc000
+#define RJMP_MASK      0xf000 /* similar to RCALL_MASK */
 
 /* EIJMP
    1001 0100 0001 1001
@@ -119,16 +127,19 @@
    1001 010k kkkk 110k
    kkkk kkkk kkkk kkkk */
 #define JMP_OPCODE     0x940c
+#define JMP_MASK       0xfe0e /* similar to CALL_MASK */
 
 /* LDS
    1001 000d dddd 0000
    kkkk kkkk kkkk kkkk */
 #define LDS_OPCODE     0x9000
+#define LDS_MASK       0xfe0f
 
 /* STS
    1001 001d dddd 0000
    kkkk kkkk kkkk kkkk */
 #define STS_OPCODE     0x9200
+#define STS_MASK       0xfe0f /* similar to LDS_MASK */
 
 /* For trapping we use RJMP on itself, i.e. endless loop,
    1100 kkkk kkkk kkkk, where 'k' is a -1 in words */
@@ -910,28 +921,32 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 	uint16_t opcode;
 
 	opcode = safe_pgm_read_word((uint32_t)pc << 1);
+
 	/* TODO: need to handle devices with 22-bit PC */
-	if (opcode & CALL_OPCODE || opcode & JMP_OPCODE)
+	if ((opcode & CALL_MASK) == CALL_OPCODE ||
+		(opcode & JMP_MASK) == JMP_OPCODE)
 		gdb_insert_breakpoint(safe_pgm_read_word(((uint32_t)pc + 1) << 1));
-	else if (opcode & ICALL_OPCODE || opcode & IJMP_OPCODE ||
-			 opcode & EICALL_OPCODE || opcode & EIJMP_OPCODE)
+	else if (opcode == ICALL_OPCODE || opcode == IJMP_OPCODE ||
+			 opcode == EICALL_OPCODE || opcode == EIJMP_OPCODE)
 		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
 		gdb_insert_breakpoint((gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30);
-	else if (opcode & RCALL_OPCODE || opcode & JMP_OPCODE)
+	else if ((opcode & RCALL_MASK) == RCALL_OPCODE ||
+			 (opcode & RJMP_MASK) == RJMP_OPCODE)
 		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
-	else if (opcode & RETn_OPCODE)
+	else if ((opcode & RETn_MASK) == RETn_OPCODE)
 		/* Return address will be upper on the stack */
 		gdb_insert_breakpoint((*(&gdb_ctx->regs->pc_h + 2) << 8) |
 							   *(&gdb_ctx->regs->pc_l + 2));
-	else if (opcode & CPSE_OPCODE || opcode & SBRn_OPCODE ||
-			 opcode & SBIn_OPCODE) {
+	else if ((opcode & CPSE_MASK) == CPSE_OPCODE ||
+			 (opcode & SBRn_MASK) == SBRn_OPCODE ||
+			 (opcode & SBIn_MASK) == SBIn_OPCODE) {
 		/* These opcodes can jump to pc + 1, + 2 or + 3.
 		   To avoid additional logic we simply set breaks on all of them */
 		gdb_insert_breakpoint(pc + 1);
 		gdb_insert_breakpoint(pc + 2);
 		gdb_insert_breakpoint(pc + 3);
 	}
-	else if (opcode & BRCH_OPCODE) {
+	else if ((opcode & BRCH_MASK) == BRCH_OPCODE) {
 		/* These opcodes can jump to pc + 1, + k + 1.
 		   To avoid additional logic we simply set breaks on all of them */
 		int8_t k = (opcode & BRCH_K_MASK) >> BRCH_K_SHIFT;
@@ -943,7 +958,8 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 		gdb_insert_breakpoint(pc + k + 1);
 	}
 	/* 32-bit opcode, advance 2 words */
-	else if (opcode & LDS_OPCODE || opcode & STS_OPCODE)
+	else if ((opcode & LDS_MASK) == LDS_OPCODE ||
+			 (opcode & STS_MASK) == STS_OPCODE)
 		gdb_insert_breakpoint(pc + 2);
 	/* 16-bit opcode, advance 1 word */
 	else
