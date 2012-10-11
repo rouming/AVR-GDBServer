@@ -7,7 +7,9 @@
 #include <avr/io.h>
 #include <stdint.h>
 
-#define MAX_BREAKS 8
+#define MAX_BREAKS       8
+#define MAX_STEPI_BREAKS 3
+
 /* must be in hex, and not fewer than 79 bytes,
    see gdb_read_registers for details */
 #define MAX_BUFF   0x50
@@ -64,7 +66,7 @@ struct gdb_context
 	} *regs;
 	uint16_t sp;
 	uint16_t pc;
-	struct gdb_break breaks[MAX_BREAKS];
+	struct gdb_break breaks[MAX_BREAKS+MAX_STEPI_BREAKS];
 	uint8_t breaks_cnt;
 	bool_t  in_stepi;
 	uint8_t buff[MAX_BUFF+1];

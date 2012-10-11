@@ -429,9 +429,8 @@ ISR(TIMER1_COMPA_vect, ISR_NAKED)
 trap:
 	/* Set correct interrupt reason */
 	if (gdb_ctx->in_stepi) {
-		/* Remove all previous stepi breaks */
-		for (uint8_t i = 0;
-			 i < ARRAY_SIZE(gdb_ctx->breaks) && gdb_ctx->breaks_cnt; ++i)
+		/* Remove all valid stepi breaks, ignoring original breaks */
+		for (uint8_t i = MAX_BREAKS; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
 			if (gdb_ctx->breaks[i].addr)
 				gdb_remove_breakpoint_ptr(&gdb_ctx->breaks[i]);
 		gdb_ctx->in_stepi = FALSE;
@@ -883,13 +882,20 @@ static void gdb_write_memory(const uint8_t *buff)
 static bool_t gdb_insert_breakpoint(uint16_t rom_addr)
 {
 	uint16_t trap_opcode = TRAP_OPCODE;
+	uint8_t i = 0, sz = MAX_BREAKS;
 	struct gdb_break *breakp = NULL;
 
-	if (gdb_ctx->breaks_cnt == MAX_BREAKS)
-		return FALSE;
-	gdb_ctx->breaks_cnt++;
+	if (!gdb_ctx->in_stepi) {
+		if (gdb_ctx->breaks_cnt == MAX_BREAKS)
+			return FALSE;
+		gdb_ctx->breaks_cnt++;
+	}
+	else {
+		i = MAX_BREAKS;
+		sz = ARRAY_SIZE(gdb_ctx->breaks);
+	}
 
-	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i) {
+	for (; i < sz; ++i) {
 		if (!gdb_ctx->breaks[i].addr) {
 			breakp = &gdb_ctx->breaks[i];
 			break;
@@ -907,7 +913,8 @@ static void gdb_remove_breakpoint_ptr(struct gdb_break *breakp)
 {
 	safe_pgm_write(&breakp->opcode, breakp->addr, sizeof(breakp->opcode));
 	breakp->addr = 0;
-	gdb_ctx->breaks_cnt--;
+	if (!gdb_ctx->in_stepi)
+		gdb_ctx->breaks_cnt--;
 }
 
 static void gdb_remove_breakpoint(uint16_t rom_addr)
@@ -969,9 +976,18 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 
 static struct gdb_break *gdb_find_break(uint16_t rom_addr)
 {
-	for (uint8_t i = 0; i < ARRAY_SIZE(gdb_ctx->breaks); ++i)
+	uint8_t i = 0, sz = MAX_BREAKS;
+
+	/* stepi breaks */
+	if (gdb_ctx->in_stepi) {
+		i = MAX_BREAKS;
+		sz = ARRAY_SIZE(gdb_ctx->breaks);
+	}
+	/* do search */
+	for (; i < sz; ++i)
 		if (gdb_ctx->breaks[i].addr == rom_addr)
 			return &gdb_ctx->breaks[i];
+
 	return NULL;
 }
 
@@ -1005,13 +1021,8 @@ static void gdb_insert_remove_breakpoint(const uint8_t *buff)
 
 static void gdb_do_stepi(void)
 {
-	/* gdb guarantees that there will be no any breakpoints
-	   already set on this stepi call, so do not bother about
-	   overlapping breaks. Actually, I did not see this statement
-	   in any gdb docs, but it behaves so (I saw traces). */
-
-	gdb_insert_breakpoints_on_next_pc(gdb_ctx->pc);
 	gdb_ctx->in_stepi = TRUE;
+	gdb_insert_breakpoints_on_next_pc(gdb_ctx->pc);
 }
 
 static bool_t gdb_parse_packet(const uint8_t *buff)
