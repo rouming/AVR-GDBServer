@@ -938,8 +938,14 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 		/* TODO: we do not handle EIND for EICALL/EIJMP opcode */
 		gdb_insert_breakpoint((gdb_ctx->regs->r31 << 8) | gdb_ctx->regs->r30);
 	else if ((opcode & RCALL_MASK) == RCALL_OPCODE ||
-			 (opcode & RJMP_MASK) == RJMP_OPCODE)
-		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
+			 (opcode & RJMP_MASK) == RJMP_OPCODE) {
+		int16_t k = (opcode & REL_K_MASK) >> REL_K_SHIFT;
+		/* k is 12-bits value and can be negative, so stretch 12 sign bit
+		   over other bits */
+		if (k & 0x0800)
+			k |= 0xf000;
+		gdb_insert_breakpoint(pc + k + 1);
+	}
 	else if ((opcode & RETn_MASK) == RETn_OPCODE) {
 		/* Return address will be upper on the stack */
 		uint8_t pc_h = *(&gdb_ctx->regs->pc_h + 2) & RET_ADDR_MASK;
