@@ -933,10 +933,11 @@ static void gdb_insert_breakpoints_on_next_pc(uint16_t pc)
 	else if ((opcode & RCALL_MASK) == RCALL_OPCODE ||
 			 (opcode & RJMP_MASK) == RJMP_OPCODE)
 		gdb_insert_breakpoint((opcode & REL_K_MASK) >> REL_K_SHIFT);
-	else if ((opcode & RETn_MASK) == RETn_OPCODE)
+	else if ((opcode & RETn_MASK) == RETn_OPCODE) {
 		/* Return address will be upper on the stack */
-		gdb_insert_breakpoint((*(&gdb_ctx->regs->pc_h + 2) << 8) |
-							   *(&gdb_ctx->regs->pc_l + 2));
+		uint8_t pc_h = *(&gdb_ctx->regs->pc_h + 2) & RET_ADDR_MASK;
+		gdb_insert_breakpoint((pc_h << 8) | *(&gdb_ctx->regs->pc_l + 2));
+	}
 	else if ((opcode & CPSE_MASK) == CPSE_OPCODE ||
 			 (opcode & SBRn_MASK) == SBRn_OPCODE ||
 			 (opcode & SBIn_MASK) == SBIn_OPCODE) {
