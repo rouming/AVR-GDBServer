@@ -88,9 +88,8 @@ static int cmpint(const void *a, const void *b)
 
 static int sort_test(void)
 {
-	int *a, i, r = 1;
-
-	a = malloc(10 * sizeof(int));
+	int i, r = 1;
+	int a[10];
 
 	for (i = 0; i < 10; i++) {
 		r = (r * 725861) % 6599;
@@ -98,13 +97,6 @@ static int sort_test(void)
 	}
 
 	sort(a, 10, sizeof(int), cmpint, NULL);
-
-	for (i = 0; i < 9; i++)
-		if (a[i] > a[i+1]) {
-			break;
-		}
-
-	free(a);
 
 	return 0;
 }
