@@ -1,9 +1,0 @@
-NAME
-    Lightweight embedded GDB server implementation for 8-bit AVR MCU with
-    16 bit PC (i.e. 128kb max ROM).
-
-    Code is just a little bit experiment and written for fun, so I did not
-    do any attempts to make it architecture independent.
-
-AUTHOR
-    Roman Pen
