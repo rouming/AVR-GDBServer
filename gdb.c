@@ -809,6 +809,8 @@ static void gdb_read_memory(const uint8_t *buff)
 		uint8_t *ptr = (uint8_t*)(uintptr_t)addr;
 		for (uint8_t i = 0; i < sz; ++i) {
 			uint8_t b = ptr[i];
+#if 0
+			/* This leads to wrong values of local variables: */
 			/* XXX: this is ugly kludge, but what can I do?
 					AVR puts return address on stack with garbage in high
 					bits (they say you should mask out them, see Stack Pointer
@@ -818,6 +820,7 @@ static void gdb_read_memory(const uint8_t *buff)
 					to stack. */
 			if (i == 0 && sz == 2 && addr >= gdb_ctx->sp)
 				b &= RET_ADDR_MASK;
+#endif			
 			gdb_ctx->buff[i*2 + 0] = nib2hex(b >> 4);
 			gdb_ctx->buff[i*2 + 1] = nib2hex(b & 0xf);
 		}
