@@ -3,9 +3,9 @@
  */
 #include <avr/interrupt.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "gdb.h"
 
-typedef uint16_t size_t;
 typedef uint32_t u32;
 
 static void u32_swap(void *a, void *b, int size)
